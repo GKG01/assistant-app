@@ -1,4 +1,5 @@
 import pytest
+import secrets
 from fastapi.testclient import TestClient
 
 from config.settings import Settings
@@ -14,7 +15,9 @@ from services.file_search import FileSearchService
 def client(tmp_path):
     settings = Settings(_env_file=None, nova_database_path=tmp_path / "test.db",
                         openai_api_key="", nova_allowed_directories=[])
-    with TestClient(create_app(settings)) as instance:
+    token = secrets.token_hex(32)
+    with TestClient(create_app(settings, session_token=token),
+                    headers={"Authorization": f"Bearer {token}"}) as instance:
         yield instance
 
 
@@ -35,5 +38,7 @@ def file_client(tmp_path):
     root.mkdir()
     settings = Settings(_env_file=None, nova_database_path=tmp_path / "index.db",
                         openai_api_key="", nova_allowed_directories=[root])
-    with TestClient(create_app(settings), headers={"X-Nova-Request": "1"}) as instance:
+    token = secrets.token_hex(32)
+    with TestClient(create_app(settings, session_token=token),
+                    headers={"X-Nova-Request": "1", "Authorization": f"Bearer {token}"}) as instance:
         yield instance, root

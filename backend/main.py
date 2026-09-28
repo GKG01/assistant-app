@@ -16,6 +16,7 @@ from database.repositories.actions import ActionRepository
 from indexer.file_indexer import FileIndexer
 from permissions.manager import PermissionManager
 from permissions.paths import PathPolicy
+from permissions.session import DesktopSession, require_desktop_session
 from services.file_search import FileSearchService
 from services.file_indexing import FileIndexingService, IndexBusyError
 from services.file_actions import FileActionService, WindowsFileLauncher
@@ -23,8 +24,9 @@ from tools.calculator import CalculateTool
 from tools.files import SearchFilesTool, GetFileInfoTool, OpenFileTool, ShowInFolderTool
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, session_token: str | None = None) -> FastAPI:
     configuration = settings if settings is not None else Settings()
+    desktop_session = DesktopSession(session_token)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -50,6 +52,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     application = FastAPI(title="Nova Backend", version="0.1.0", lifespan=lifespan)
+    application.state.desktop_session = desktop_session
+
+    @application.get("/session")
+    def session_status(request: Request) -> dict[str, str]:
+        require_desktop_session(request)
+        return {"status": "ok"}
     application.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
     )
@@ -57,7 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=sorted(files.TRUSTED_ORIGINS),
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-Nova-Request"],
+        allow_headers=["Content-Type", "X-Nova-Request", "Authorization"],
     )
     for error, status, message in (
         (FileNotFoundError, 404, "File or directory no longer exists. Refresh the index."),

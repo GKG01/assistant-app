@@ -29,7 +29,7 @@ export function FileSearch() {
     try {
       await load(paginate ? { ...activeFilters, offset } : { q, extension, sort, limit: PAGE_SIZE, offset });
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Search failed.");
+      setError(error instanceof Error ? error.message : typeof error === "string" ? error : "Search failed.");
     } finally { setBusy(null); }
   }
 
@@ -43,7 +43,7 @@ export function FileSearch() {
       setStats(result);
       await load({ q, extension, sort, limit: PAGE_SIZE, offset: 0 });
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Refresh failed.");
+      setError(error instanceof Error ? error.message : typeof error === "string" ? error : "Refresh failed.");
     } finally { setBusy(null); }
   }
 
@@ -56,7 +56,7 @@ export function FileSearch() {
       else await showInFolder(id);
       setNotice(action === "open" ? "Open request sent to Windows." : "Reveal request sent to Windows.");
     } catch (error) {
-      setError(error instanceof Error ? error.message : "File action failed.");
+      setError(error instanceof Error ? error.message : typeof error === "string" ? error : "File action failed.");
     } finally { setBusy(null); }
   }
 

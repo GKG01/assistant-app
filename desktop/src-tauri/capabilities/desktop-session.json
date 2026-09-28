@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-session",
+  "description": "Only Nova's local main webview may retrieve its managed backend session.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": ["allow-backend-session"]
+}
