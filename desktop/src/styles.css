@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  color: #e2e8f0;
+  background: #101820;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+.button { border-radius: 0.6rem; padding: 0.6rem 1rem; font-size: 0.85rem; }
+.button:disabled { cursor: not-allowed; opacity: 0.45; }
