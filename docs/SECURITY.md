@@ -1,90 +1,130 @@
 # Security model
 
-## Trust and least privilege
+## Trust boundary
 
-The model is an untrusted proposer. It cannot authorize execution, register tools,
-execute arbitrary code, mutate SQLite, or access the OS directly. Backend code is
-trusted and must preserve these boundaries. This is an application-level boundary,
-not an OS sandbox against malicious Python code or a compromised local account.
+The frontend is not a security boundary. Every indexed, returned, inspected, or
+launched file passes deterministic backend policy. BRAIN remains unimplemented;
+future models only propose registered ToolCalls. They receive no shell, generic
+subprocess, code evaluation, arbitrary filesystem, or direct database capability.
+This is an application boundary, not an OS sandbox against a compromised account.
 
-Only the explicitly registered calculator can currently run through the guard.
-No shell, PowerShell, CMD, generic subprocess, eval, exec, or arbitrary Python tool
-exists. Tauri has an empty capability list, no plugins, and no custom Rust commands.
-The UI uses browser fetch to the loopback backend. Its CSP restricts connections
-to the backend; development additionally permits Vite hot-reload WebSockets.
-See [Tauri capabilities](https://v2.tauri.app/security/capabilities/).
+Tauri still has an empty capability list and no native plugins/custom commands.
+The React client uses the loopback HTTP backend under the existing CSP.
 
-## Risk and confirmation
+## Allowed directories and path validation
 
-| Risk | Policy |
+NOVA_ALLOWED_DIRECTORIES is a JSON array of absolute native-platform paths.
+Empty means deny. Roots are never auto-discovered; the index API accepts only an
+empty request body, not an arbitrary path. Overlapping roots are collapsed.
+
+PathPolicy is the shared boundary for indexing, search, metadata lookup, and launch:
+
+1. Require an absolute native path; reject parent traversal, all-dot traversal
+   variants, NULs, and foreign separators.
+2. Check lexical ancestry using Path.is_relative_to before stat'ing a candidate
+   outside configured roots. No raw string prefix authorization is used.
+3. Reject whole drive roots, UNC/network/device namespaces, known system locations,
+   reserved Windows names, alternate data streams, and ambiguous trailing dots/spaces.
+4. lstat every existing ancestor and the target. Deny symlinks and any Windows
+   FILE_ATTRIBUTE_REPARSE_POINT, including junctions and some cloud placeholders.
+5. Resolve/canonicalize and recheck path ancestry/system policy. Normalize Windows
+   path case for database identity. Require existence for scanning and actions.
+
+System exclusions include Windows, Program Files, ProgramData, Recovery,
+System Volume Information and recycle-bin directory names; Linux system trees
+include /etc, /usr, /proc, /sys, /dev, /bin, /sbin, /boot, /root and /var.
+The exclusions are conservative and not an exhaustive OS-directory inventory.
+Configure personal folders, not whole profiles, mount collections, or system roots.
+
+Indexer validates each entry and directory; no link is followed intentionally,
+including links within an allowed root. No content reads, document parsing, hashes,
+embedding generation, or filesystem writes are part of indexing. Unsupported special
+files are skipped. SQLite and its journal files are excluded from scans.
+Stale cleanup removes database rows only.
+
+Search is SQLite-backed. Before returning/counting results, the service rechecks
+each candidate against current path policy, including links introduced after indexing.
+Changing configuration requires restart. Revoked data stays in SQLite but is hidden.
+Deletion freshness is handled by explicit refresh; stale entries cannot be opened
+after the existence check fails.
+
+## Execution classification
+
+| Risk | Behavior |
 | --- | --- |
-| READ | May execute after registry lookup and input validation |
-| WRITE | Return a pending action; execution is unavailable |
-| DESTRUCTIVE | Deny in V1; future support needs stronger confirmation |
+| READ | Registered calculate/search/info may execute after input validation |
+| INTERACTIVE | Open/reveal require direct user initiation; otherwise pending |
+| WRITE | Pending only; no execution/confirmation API |
+| DESTRUCTIVE | Denied |
 
-Risk is assigned by trusted tool code, never by a model or incoming request.
-Input schemas reject extra arguments. Unknown tool names are rejected.
-The backend guard is the only intended execution entry point.
+INTERACTIVE is a Phase 2 addition because opening a file has effects beyond reading
+metadata. Fixed HTTP action handlers supply trusted user intent to the guard. Neither
+risk nor user_initiated can be supplied in ToolCall arguments. A future model cannot
+confirm its own proposal. WRITE cannot be executed using interactive intent.
 
-Future confirmations must reference a stored action ID and immutable normalized
-arguments, expire, be single-use, be bound to the active desktop session, and
-support cancellation. The model must not have access to the confirmation channel.
-A returned PendingAction alone is not authorization. Re-check paths and policy at
-execution time. Moving, renaming, and creating require confirmation. Opening a
-file or launching Explorer also requires confirmation; file opening may run active
-content through OS associations. No deletion or overwrite tool is provided.
+Open/reveal take a positive indexed ID, not an arbitrary path, executable, verb, URL,
+or command argument. SQLite AUTOINCREMENT prevents an old deleted ID from silently
+referring to a newly indexed file.
 
-## Filesystem boundary
+Open permits only .pdf, .txt, .csv, .png, .jpg, .jpeg, .gif, .bmp, .webp, .docx, .xlsx,
+and .pptx. Executables, scripts, shortcuts, HTML, SVG and unknown types are not launched.
+The guard and FileActionService revalidate paths immediately before Windows dispatch.
+os.startfile uses a fixed open verb without caller-controlled arguments.
+Reveal uses typed native SHParseDisplayName/SHOpenFolderAndSelectItems calls, selecting
+the item in Explorer. There is no shell command construction or subprocess launcher.
+See [Microsoft's API contract](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shopenfolderandselectitems).
 
-`NOVA_ALLOWED_DIRECTORIES` is an explicit JSON list. The default is empty.
-Nothing automatically grants access to Desktop, Documents, Downloads, or Pictures.
-Whole-drive roots are rejected by the path utility. Do not select system directories.
+Supported extensions do not make a document safe. Malicious documents, unsafe local
+associations, viewer vulnerabilities, and Explorer preview handlers remain risks.
+Only open files you trust. Native launch success is not viewer success.
 
-`validate_path` requires an absolute path, rejects parent traversal, canonicalizes
-symlinks, and checks actual path ancestry instead of unsafe string prefixes.
-Future tools must validate every source and destination, including rename targets,
-at execution time. Indexing must check every discovered entry and avoid following
-links into unapproved locations. Metadata only: no document contents, embeddings,
-or drive-wide discovery.
+## Local HTTP protections
 
-This baseline does not eliminate filesystem race conditions. A link or Windows
-junction could change between validation and use. Before filesystem mutation ships,
-use platform-appropriate safe handles and reparse-point controls, test UNC paths,
-device namespaces, alternate data streams, case handling, junctions, and
-time-of-check/time-of-use races on Windows. Consider denial of network paths and
-executable file types. Linux path tests are not Windows security certification.
+Keep Uvicorn bound to 127.0.0.1 and use one worker. TrustedHost and exact CORS origins
+remain in place. Every /files endpoint also requires X-Nova-Request: 1 and rejects
+untrusted Origin values. The custom header requires cross-origin browser preflight,
+blocking simple form/link-triggered launches. The frontend adds it centrally.
 
-## Local HTTP boundary
+The header is public, not a credential. Origin-free local scripts are allowed.
+There is no authentication system: malicious local processes, a compromised trusted
+frontend, or another process controlling an allowed local origin are outside this
+boundary. Do not expose the backend to a LAN or the internet. A stronger desktop
+session binding remains necessary before distribution to untrusted environments.
 
-Uvicorn defaults to `127.0.0.1:8000`; do not bind to `0.0.0.0`.
-Trusted hosts and exact development/Tauri CORS origins reduce browser exposure.
-CORS is not authentication and does not block arbitrary local clients.
-Only health is functional; computer-action routes return 501.
+## SQLite and audit safety
 
-Before enabling real action endpoints, add a local desktop session boundary with
-request-origin checks, CSRF/replay protections as appropriate, and bounded requests.
-A full authentication system is out of scope for this boilerplate.
-Do not deploy this backend publicly.
+Queries are parameterized and sort clauses use a fixed mapping. Versioned migrations
+preserve existing IDs/action data and refuse unknown future versions.
+A root refresh uses one transaction and batched writes. A failed scan subtree retains
+old metadata; a failed transaction rolls back the root refresh. No commit-per-file
+or deletion of the entire index occurs.
 
-## Data, audit records, and secrets
+Open/reveal persist a request record before invoking the OS; an audit-write failure
+prevents launch. OS/unsupported-platform failures get a separate failed record.
+These records indicate requested/failed dispatch, not verified viewer completion.
+Policy rejections, searches, and indexing are not comprehensively audit-logged yet.
 
-SQLite contains file metadata and action-history schema. Repositories use
-parameterized SQL and JSON serialization. The actions repository is implemented,
-but automatic audit logging is not yet connected. Future orchestration must record
-proposal, denial, confirmation, execution, and failure with correlation IDs, and
-define retention/redaction. Audit data may contain sensitive paths and commands.
+SQLite metadata and action history are unencrypted and may reveal filenames and paths.
+Protect them using OS account permissions. .env, SQLite files, virtual environments,
+and generated artifacts remain ignored. No new secret or external integration exists;
+OPENAI_API_KEY remains an unused backend-only setting.
 
-The database is not encrypted and depends on OS account permissions.
-Environment files, databases, virtual environments, and build artifacts are ignored
-by Git. The example environment file contains no key. API keys remain in backend
-environment/configuration, wrapped as SecretStr; never pass them through Vite
-variables, logs, tool results, or frontend bundles. Startup works with no key and
-the OpenAI provider makes no network calls.
+## Remaining limits
 
-## Before expanding capabilities
+- Path checks cannot atomically bind a pathname to the object later opened by a
+  viewer. Concurrent directory/reparse replacement races remain possible. Native
+  handle-based access would be needed for stronger guarantees; there are no file
+  mutations in this phase.
+- Hard links and changed mount topology are not a content-isolation boundary.
+- Reparse rejection may exclude OneDrive-backed folders even when user-visible.
+- System-directory detection is conservative, not a complete Windows known-folder API.
+- Indexing uses memory proportional to one root and validates paths repeatedly.
+  Name substring search scans candidate keys. Extremely large roots need later tuning.
+- A scan that loses access keeps old metadata; refresh after restoring access to
+  reconcile it. Client disconnection does not cancel a running scan.
+- Linux tests cover native-independent policy and mock Windows launches; they do
+  not certify Windows shell associations, Explorer selection, or real junction races.
 
-Add Windows-specific path tests, durable confirmations, execution audit integration,
-resource limits, prompt-injection-resistant handling of tool output, dependency
-review, and secure backend lifecycle management before shipping computer actions.
-The model can propose a malicious action even when its prompt forbids it;
-deterministic policy must remain authoritative.
+Future reasoning must use the existing READ tools and continue treating filenames
+and tool results as untrusted data. Durable WRITE confirmations, stronger session
+binding, and distribution hardening remain separate tasks.
