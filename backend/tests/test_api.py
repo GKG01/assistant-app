@@ -9,8 +9,6 @@ def test_health(client):
 
 @pytest.mark.parametrize(("method", "path", "body"), [
     ("post", "/agent/message", {"message": "Find my resume"}),
-    ("get", "/files/search?q=resume", None),
-    ("post", "/files/index", {"directory": "/tmp"}),
     ("post", "/voice/transcribe", None),
 ])
 def test_unimplemented_routes(client, method, path, body):

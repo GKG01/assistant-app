@@ -10,6 +10,7 @@ from tools.calculator import CalculateTool
 
 @pytest.mark.parametrize(("risk", "decision"), [
     (RiskLevel.READ, Decision.ALLOW),
+    (RiskLevel.INTERACTIVE, Decision.CONFIRM),
     (RiskLevel.WRITE, Decision.CONFIRM),
     (RiskLevel.DESTRUCTIVE, Decision.DENY),
 ])
@@ -49,3 +50,15 @@ def test_read_dispatch_and_validation():
         manager.dispatch(ToolCall(tool="shell"))
     with pytest.raises(ValidationError):
         ToolCall(tool="calculate", risk="READ", confirmed=True)
+
+
+def test_user_initiated_cannot_authorize_write():
+    tool = CalculateTool()
+    tool.risk = RiskLevel.WRITE
+    registry = ToolRegistry()
+    registry.register(tool)
+    result = PermissionManager(registry).dispatch(
+        ToolCall(tool="calculate", arguments={"operation": "add", "operands": [1, 2]}),
+        user_initiated=True,
+    )
+    assert isinstance(result, PendingAction)

@@ -3,6 +3,11 @@ from fastapi.testclient import TestClient
 
 from config.settings import Settings
 from main import create_app
+from database.database import Database
+from database.repositories.files import FileRepository
+from indexer.file_indexer import FileIndexer
+from permissions.paths import PathPolicy
+from services.file_search import FileSearchService
 
 
 @pytest.fixture
@@ -11,3 +16,24 @@ def client(tmp_path):
                         openai_api_key="", nova_allowed_directories=[])
     with TestClient(create_app(settings)) as instance:
         yield instance
+
+
+@pytest.fixture
+def file_stack(tmp_path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    database = Database(tmp_path / "index.db")
+    database.initialize()
+    repository = FileRepository(database)
+    policy = PathPolicy([root])
+    return root, database, repository, FileIndexer(policy, repository), FileSearchService(repository, policy)
+
+
+@pytest.fixture
+def file_client(tmp_path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    settings = Settings(_env_file=None, nova_database_path=tmp_path / "index.db",
+                        openai_api_key="", nova_allowed_directories=[root])
+    with TestClient(create_app(settings), headers={"X-Nova-Request": "1"}) as instance:
+        yield instance, root
