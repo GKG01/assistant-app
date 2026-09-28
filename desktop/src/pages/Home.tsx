@@ -2,6 +2,7 @@ import { CommandInput } from "../components/chat/CommandInput";
 import { FileSearch } from "../components/files/FileSearch";
 import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { useBackendStatus } from "../hooks/useBackendStatus";
+import { isTauri } from "@tauri-apps/api/core";
 
 export default function Home() {
   const status = useBackendStatus();
@@ -11,6 +12,9 @@ export default function Home() {
         <h1 className="text-xl font-semibold tracking-tight">Nova<span className="text-teal-400">.</span></h1>
         <StatusIndicator status={status} />
       </header>
+      {!isTauri() && <p role="status" className="mt-4 text-sm text-amber-300">
+        Browser preview only. Start Nova with npm run tauri dev to access files.
+      </p>}
       <FileSearch />
       <footer><CommandInput /></footer>
     </main>

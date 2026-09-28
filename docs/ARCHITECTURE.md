@@ -108,14 +108,17 @@ refresh statistics, loading/error/empty states, and file cards.
 The existing centralized api.ts performs all HTTP calls and supplies the required
 file-request header. Formatters handle bytes and locale dates for presentation.
 Buttons are disabled during requests; refresh completion reruns the current search.
-There is no simulated progress and no filesystem access from React or Tauri.
+There is no simulated progress and no filesystem access from React. Tauri starts
+the managed backend child and exposes only a restricted command that returns a
+per-launch session credential to the main window.
 
 ## Platform and deployment limits
 
 Windows APIs must run in the Windows-native Python process. Linux/WSL open/reveal
-return 501, with no shell fallback or path translation. The Tauri host still has
-no plugins, IPC capabilities, or backend launcher. Windows GUI behavior must be
-tested on Windows; Linux tests mock the OS boundary.
+return 501, with no shell fallback or path translation. The Tauri host starts
+the backend through `backend/managed.py`, owns its lifetime, and exposes only the
+`backend_session` command to the trusted main window. Windows GUI behavior must
+be tested on Windows; Linux tests mock the OS boundary.
 
-No ORM, background watcher, external service, authentication system, or new
+No ORM, background watcher, external service, user login system, or new
 frontend dependency was introduced.

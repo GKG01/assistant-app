@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 from agent.schemas import ToolCall, ToolResult
 from services.file_models import FileActionResponse, IndexedFile, IndexStats, SearchFilters, SearchResponse
+from permissions.session import require_desktop_session
 
 TRUSTED_ORIGINS = frozenset({
     "http://localhost:1420", "http://127.0.0.1:1420", "http://tauri.localhost",
@@ -13,6 +14,7 @@ TRUSTED_ORIGINS = frozenset({
 
 
 def require_file_client(request: Request) -> None:
+    require_desktop_session(request)
     # Custom header forces browser preflight; CORS alone does not stop side effects.
     if request.headers.get("X-Nova-Request") != "1":
         raise HTTPException(403, "Nova request header is required.")

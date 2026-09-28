@@ -1,11 +1,12 @@
 import type { FileActionResponse, HealthResponse, IndexStats, SearchFilters, SearchResponse } from "../types/api";
+import { sessionHeaders } from "./session";
 
 const BASE_URL = "http://127.0.0.1:8000";
 
 async function fileRequest<T>(path: string, method = "GET", timeout = 30000): Promise<T> {
   const response = await fetch(`${BASE_URL}/files${path}`, {
     method,
-    headers: { "X-Nova-Request": "1" },
+    headers: await sessionHeaders(),
     signal: AbortSignal.timeout(timeout),
   });
   const data = await response.json();
@@ -38,6 +39,12 @@ export function showInFolder(id: number): Promise<FileActionResponse> {
 }
 
 export async function healthCheck(signal?: AbortSignal): Promise<HealthResponse> {
+  const headers = await sessionHeaders();
+  const authenticated = await fetch(`${BASE_URL}/session`, {
+    headers,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000),
+  });
+  if (!authenticated.ok) throw new Error("Desktop session is unavailable.");
   const response = await fetch(`${BASE_URL}/health`, {
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4000)]) : AbortSignal.timeout(4000),
   });

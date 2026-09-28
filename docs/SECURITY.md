@@ -8,7 +8,9 @@ future models only propose registered ToolCalls. They receive no shell, generic
 subprocess, code evaluation, arbitrary filesystem, or direct database capability.
 This is an application boundary, not an OS sandbox against a compromised account.
 
-Tauri still has an empty capability list and no native plugins/custom commands.
+Tauri has one narrowly scoped custom command, `backend_session`, available only
+to the main window and trusted local origins. It returns a random per-launch
+credential; no shell, subprocess, or filesystem capability is exposed.
 The React client uses the loopback HTTP backend under the existing CSP.
 
 ## Allowed directories and path validation
@@ -85,11 +87,11 @@ remain in place. Every /files endpoint also requires X-Nova-Request: 1 and rejec
 untrusted Origin values. The custom header requires cross-origin browser preflight,
 blocking simple form/link-triggered launches. The frontend adds it centrally.
 
-The header is public, not a credential. Origin-free local scripts are allowed.
-There is no authentication system: malicious local processes, a compromised trusted
-frontend, or another process controlling an allowed local origin are outside this
-boundary. Do not expose the backend to a LAN or the internet. A stronger desktop
-session binding remains necessary before distribution to untrusted environments.
+The header is public, not a credential. The Tauri-managed backend additionally
+requires its per-launch Bearer credential; a manually started backend has no
+credential and fails closed for file operations. There is no user login system:
+malicious local processes or a compromised trusted frontend remain outside this
+application boundary. Do not expose the backend to a LAN or the internet.
 
 ## SQLite and audit safety
 
@@ -126,5 +128,6 @@ OPENAI_API_KEY remains an unused backend-only setting.
   not certify Windows shell associations, Explorer selection, or real junction races.
 
 Future reasoning must use the existing READ tools and continue treating filenames
-and tool results as untrusted data. Durable WRITE confirmations, stronger session
-binding, and distribution hardening remain separate tasks.
+and tool results as untrusted data. Durable WRITE confirmations and distribution
+hardening remain separate tasks; the current session credential is not a user
+login or a full OS security boundary.

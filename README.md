@@ -103,7 +103,8 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:1420`. Keep the backend running separately.
+Open `http://127.0.0.1:1420`. This browser preview is useful for layout work;
+file operations require the managed Tauri desktop session.
 For native Windows, install Windows Node/npm, Rust MSVC, Visual Studio Build Tools
 with **Desktop development with C++**, Windows SDK, and WebView2. Follow
 [Tauri's Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows).
@@ -114,9 +115,9 @@ Stop any separate Vite server, then from `desktop/`:
 npm run tauri dev
 ```
 
-Tauri starts Vite itself on port 1420. Do not reuse WSL node_modules on Windows.
+Tauri starts Vite itself on port 1420 and starts the FastAPI backend as a managed
+child process. Do not run a second backend on port 8000 or reuse WSL node_modules.
 `npm run tauri build` builds a native executable; installer bundling is disabled.
-Backend lifecycle/packaging remains separate: Tauri does not start Python.
 
 WSL supports backend tests and browser UI development. Tauri in WSL builds a Linux
 app and needs Linux GTK/WebKit dependencies plus WSLg/display support. It does not
@@ -183,9 +184,9 @@ mean Windows accepted a launch request, not that the viewer rendered successfull
 
 ### File API
 
-All file requests require `X-Nova-Request: 1`; untrusted browser Origins are
-rejected. This header is CSRF hardening, not a secret or local-process authentication.
-The browser client supplies it automatically.
+All file requests require `X-Nova-Request: 1` and a per-launch Bearer session
+issued only to the Tauri main window. The browser preview and a manually started
+backend cannot access file endpoints.
 
 | Endpoint | Behavior |
 | --- | --- |
@@ -203,8 +204,8 @@ Sizes are bytes. Sorts: `name_asc`, `name_desc`, `modified_asc`,
 200; offset is capped at 1,000,000. Directory filters require an allowed native path.
 
 ```bash
-curl -X POST -H "X-Nova-Request: 1" http://127.0.0.1:8000/files/index
-curl -H "X-Nova-Request: 1" "http://127.0.0.1:8000/files/search?q=resume&extension=pdf&sort=modified_desc&limit=20"
+These endpoints are exercised from the Tauri app. Requests without the managed
+session return `401 Unauthorized`.
 ```
 
 In PowerShell use `curl.exe`. Empty configuration returns 400 on refresh.
@@ -247,7 +248,8 @@ shell, subprocess, code-evaluation, or direct model database capability.
 SQLite migrates Phase 1 to schema version 2, preserving existing IDs and actions.
 Open/reveal record requests and launch failures; search results and file contents
 are not logged. Data is not encrypted. .env, database files, and test/build artifacts
-are excluded from Git. Tauri retains an empty native capability list.
+are excluded from Git. Tauri exposes only the narrowly scoped backend-session
+command; it does not expose shell or filesystem commands.
 
 Loopback and browser-origin checks do not protect against a malicious local process.
 Concurrent filesystem replacement races cannot be fully eliminated by path checks;

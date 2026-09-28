@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "capabilities": [],
+      "capabilities": ["desktop-session"],
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8000; object-src 'none'; frame-src 'none'; base-uri 'self'",
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 ws://127.0.0.1:1420; object-src 'none'; frame-src 'none'; base-uri 'self'"
     }
