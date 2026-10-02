@@ -14,11 +14,17 @@ class DesktopSession:
         expected = self._token
         supplied = authorization or ""
         # Check format before compare_digest; non-ASCII header values fail closed.
-        if (expected is None or not supplied.startswith("Bearer ")
-                or re.fullmatch(r"[0-9a-f]{64}", supplied[7:]) is None
-                or not secrets.compare_digest(expected, supplied[7:])):
-            raise HTTPException(401, "A valid Nova desktop session is required.",
-                                headers={"WWW-Authenticate": "Bearer"})
+        if (
+            expected is None
+            or not supplied.startswith("Bearer ")
+            or re.fullmatch(r"[0-9a-f]{64}", supplied[7:]) is None
+            or not secrets.compare_digest(expected, supplied[7:])
+        ):
+            raise HTTPException(
+                401,
+                "A valid Nova desktop session is required.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
 
 def require_desktop_session(request: Request) -> None:

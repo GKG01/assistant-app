@@ -22,33 +22,47 @@ def populated(file_stack):
     return file_stack
 
 
-@pytest.mark.parametrize(("filters", "names"), [
-    ({"q": "RESUME"}, ["Resume.PDF"]),
-    ({"q": "RÉSUMÉ"}, ["résumé.docx"]),
-    ({"extension": "PDF", "sort": "name_asc"}, ["other.pdf", "Resume.PDF"]),
-    ({"extension": ".pdf", "min_size": 11}, ["other.pdf"]),
-    ({"min_size": 20, "max_size": 30, "sort": "size_asc"}, ["résumé.docx", "photo.jpg"]),
-    ({"q": "%"}, []),
-    ({"q": "' OR 1=1 --"}, []),
-    ({"q": "missing"}, []),
-    ({"modified_after": datetime.fromtimestamp(1700000100, timezone.utc),
-      "modified_before": datetime.fromtimestamp(1700000200, timezone.utc),
-      "sort": "modified_asc"}, ["résumé.docx", "photo.jpg"]),
-])
+@pytest.mark.parametrize(
+    ("filters", "names"),
+    [
+        ({"q": "RESUME"}, ["Resume.PDF"]),
+        ({"q": "RÉSUMÉ"}, ["résumé.docx"]),
+        ({"extension": "PDF", "sort": "name_asc"}, ["other.pdf", "Resume.PDF"]),
+        ({"extension": ".pdf", "min_size": 11}, ["other.pdf"]),
+        (
+            {"min_size": 20, "max_size": 30, "sort": "size_asc"},
+            ["résumé.docx", "photo.jpg"],
+        ),
+        ({"q": "%"}, []),
+        ({"q": "' OR 1=1 --"}, []),
+        ({"q": "missing"}, []),
+        (
+            {
+                "modified_after": datetime.fromtimestamp(1700000100, timezone.utc),
+                "modified_before": datetime.fromtimestamp(1700000200, timezone.utc),
+                "sort": "modified_asc",
+            },
+            ["résumé.docx", "photo.jpg"],
+        ),
+    ],
+)
 def test_filters(populated, filters, names):
     response = populated[-1].search(SearchFilters(**filters))
     assert [file.name for file in response.results] == names
     assert response.total == len(names)
 
 
-@pytest.mark.parametrize(("sort", "expected"), [
-    ("name_asc", ["other.pdf", "photo.jpg", "Resume.PDF", "résumé.docx"]),
-    ("name_desc", ["résumé.docx", "Resume.PDF", "photo.jpg", "other.pdf"]),
-    ("size_asc", ["Resume.PDF", "résumé.docx", "photo.jpg", "other.pdf"]),
-    ("size_desc", ["other.pdf", "photo.jpg", "résumé.docx", "Resume.PDF"]),
-    ("modified_asc", ["Resume.PDF", "résumé.docx", "photo.jpg", "other.pdf"]),
-    ("modified_desc", ["other.pdf", "photo.jpg", "résumé.docx", "Resume.PDF"]),
-])
+@pytest.mark.parametrize(
+    ("sort", "expected"),
+    [
+        ("name_asc", ["other.pdf", "photo.jpg", "Resume.PDF", "résumé.docx"]),
+        ("name_desc", ["résumé.docx", "Resume.PDF", "photo.jpg", "other.pdf"]),
+        ("size_asc", ["Resume.PDF", "résumé.docx", "photo.jpg", "other.pdf"]),
+        ("size_desc", ["other.pdf", "photo.jpg", "résumé.docx", "Resume.PDF"]),
+        ("modified_asc", ["Resume.PDF", "résumé.docx", "photo.jpg", "other.pdf"]),
+        ("modified_desc", ["other.pdf", "photo.jpg", "résumé.docx", "Resume.PDF"]),
+    ],
+)
 def test_sorting(populated, sort, expected):
     result = populated[-1].search(SearchFilters(sort=sort))
     assert [file.name for file in result.results] == expected

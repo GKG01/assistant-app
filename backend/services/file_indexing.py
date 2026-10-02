@@ -21,7 +21,9 @@ class FileIndexingService:
         try:
             start = perf_counter()
             if not self.indexer.policy.roots:
-                raise ValueError("Configure NOVA_ALLOWED_DIRECTORIES before refreshing files.")
+                raise ValueError(
+                    "Configure NOVA_ALLOWED_DIRECTORIES before refreshing files."
+                )
             # Collapse overlaps so a file has one owner and is counted once.
             roots = sorted(self.indexer.policy.roots, key=lambda root: len(root.parts))
             selected: list[Path] = []
@@ -32,9 +34,18 @@ class FileIndexingService:
             for number, root in enumerate(selected, 1):
                 try:
                     result = self.indexer.index(root)
-                    for field in ("indexed", "created", "updated", "unchanged", "removed",
-                                  "skipped", "roots_indexed"):
-                        setattr(total, field, getattr(total, field) + getattr(result, field))
+                    for field in (
+                        "indexed",
+                        "created",
+                        "updated",
+                        "unchanged",
+                        "removed",
+                        "skipped",
+                        "roots_indexed",
+                    ):
+                        setattr(
+                            total, field, getattr(total, field) + getattr(result, field)
+                        )
                     total.warnings.extend(result.warnings)
                 except (OSError, ValueError, RuntimeError):
                     total.roots_failed += 1

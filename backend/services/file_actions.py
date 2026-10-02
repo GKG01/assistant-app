@@ -9,10 +9,22 @@ from permissions.windows_handles import pinned_file
 from services.file_models import FileActionResponse
 from services.file_search import FileSearchService
 
-OPEN_EXTENSIONS = frozenset({
-    ".pdf", ".txt", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".bmp",
-    ".webp", ".docx", ".xlsx", ".pptx",
-})
+OPEN_EXTENSIONS = frozenset(
+    {
+        ".pdf",
+        ".txt",
+        ".csv",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+    }
+)
 
 
 class WindowsFileLauncher:
@@ -25,7 +37,9 @@ class WindowsFileLauncher:
 
     def show_in_folder(self, path: Path) -> None:
         if os.name != "nt":
-            raise NotImplementedError("Show in Folder requires the Windows-native backend.")
+            raise NotImplementedError(
+                "Show in Folder requires the Windows-native backend."
+            )
         # A fully qualified PIDL with cidl=0 selects that item in its parent folder.
         from ctypes import wintypes
 
@@ -38,12 +52,18 @@ class WindowsFileLauncher:
         ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
         ole32.CoTaskMemFree.restype = None
         shell32.SHParseDisplayName.argtypes = [
-            wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
-            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
         ]
         shell32.SHParseDisplayName.restype = ctypes.c_long
         shell32.SHOpenFolderAndSelectItems.argtypes = [
-            ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.UINT,
+            ctypes.c_void_p,
+            wintypes.DWORD,
         ]
         shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
         initialized = ole32.CoInitializeEx(None, 2)
@@ -52,8 +72,12 @@ class WindowsFileLauncher:
         item = ctypes.c_void_p()
         attributes = wintypes.DWORD()
         try:
-            if shell32.SHParseDisplayName(str(path), None, ctypes.byref(item), 0,
-                                         ctypes.byref(attributes)) < 0:
+            if (
+                shell32.SHParseDisplayName(
+                    str(path), None, ctypes.byref(item), 0, ctypes.byref(attributes)
+                )
+                < 0
+            ):
                 raise OSError("Windows could not resolve the selected file.")
             if shell32.SHOpenFolderAndSelectItems(item, 0, None, 0) < 0:
                 raise OSError("Windows could not reveal the selected file.")
@@ -64,29 +88,54 @@ class WindowsFileLauncher:
 
 
 class FileActionService:
-    def __init__(self, search: FileSearchService, actions: ActionRepository,
-                 launcher: WindowsFileLauncher) -> None:
+    def __init__(
+        self,
+        search: FileSearchService,
+        actions: ActionRepository,
+        launcher: WindowsFileLauncher,
+    ) -> None:
         self.search = search
         self.actions = actions
         self.launcher = launcher
 
-    def perform(self, file_id: int, action: Literal["open_file", "show_in_folder"]) -> FileActionResponse:
+    def perform(
+        self, file_id: int, action: Literal["open_file", "show_in_folder"]
+    ) -> FileActionResponse:
         file = self.search.get_file_info(file_id)
-        if action == "open_file" and Path(file.path).suffix.casefold() not in OPEN_EXTENSIONS:
-            raise PermissionError("Opening this file type is disabled. Use Show in Folder instead.")
+        if (
+            action == "open_file"
+            and Path(file.path).suffix.casefold() not in OPEN_EXTENSIONS
+        ):
+            raise PermissionError(
+                "Opening this file type is disabled. Use Show in Folder instead."
+            )
         # Record before invoking the OS; a failed audit write prevents the launch.
-        self.actions.record(user_command="Explicit file button", tool=action,
-                            arguments={"file_id": file_id}, result=None, status="requested")
+        self.actions.record(
+            user_command="Explicit file button",
+            tool=action,
+            arguments={"file_id": file_id},
+            result=None,
+            status="requested",
+        )
         try:
             path = self.search.policy.validate(Path(file.path), must_exist=True)
-            guard = pinned_file(self.search.policy, path) if os.name == "nt" else nullcontext(path)
+            guard = (
+                pinned_file(self.search.policy, path)
+                if os.name == "nt"
+                else nullcontext(path)
+            )
             with guard as pinned:
                 if action == "open_file":
                     self.launcher.open_file(pinned)
                 else:
                     self.launcher.show_in_folder(pinned)
         except (OSError, NotImplementedError):
-            self.actions.record(user_command="Explicit file button", tool=action,
-                                arguments={"file_id": file_id}, result=None, status="failed")
+            self.actions.record(
+                user_command="Explicit file button",
+                tool=action,
+                arguments={"file_id": file_id},
+                result=None,
+                status="failed",
+            )
             raise
         return FileActionResponse(file_id=file_id, action=action)

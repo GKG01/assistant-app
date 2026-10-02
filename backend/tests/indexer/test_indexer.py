@@ -13,8 +13,12 @@ def test_recursive_metadata_without_content_reads(file_stack, monkeypatch):
     file = root / "nested" / "Resume.PDF"
     file.write_bytes(b"private content")
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "open", lambda *a, **k: pytest.fail("Indexer opened contents"))
-        patch.setattr("builtins.open", lambda *a, **k: pytest.fail("Indexer opened contents"))
+        patch.setattr(
+            Path, "open", lambda *a, **k: pytest.fail("Indexer opened contents")
+        )
+        patch.setattr(
+            "builtins.open", lambda *a, **k: pytest.fail("Indexer opened contents")
+        )
         result = indexer.index(root)
     assert result.indexed == result.created == 1
     row = repository.get_file_by_path(str(file))
@@ -37,9 +41,17 @@ def test_refresh_add_update_remove_and_stable_ids(file_stack):
     deleted.unlink()
     (root / "report.pdf").touch()
     result = indexer.index(root)
-    assert (result.created, result.updated, result.removed, result.indexed) == (1, 1, 1, 2)
+    assert (result.created, result.updated, result.removed, result.indexed) == (
+        1,
+        1,
+        1,
+        2,
+    )
     assert repository.get_file_by_path(str(first)).id == first_id
-    assert {file.name for file in search.search(SearchFilters()).results} == {"resume.pdf", "report.pdf"}
+    assert {file.name for file in search.search(SearchFilters()).results} == {
+        "resume.pdf",
+        "report.pdf",
+    }
 
 
 def test_empty_root_and_deleted_ids_not_reused(file_stack):
@@ -129,7 +141,9 @@ def test_database_failure_rolls_back_refresh(file_stack):
     original.unlink()
     (root / "new.txt").touch()
     with database.connect() as connection:
-        connection.execute("CREATE TRIGGER fail_insert BEFORE INSERT ON files BEGIN SELECT RAISE(ABORT, 'test'); END")
+        connection.execute(
+            "CREATE TRIGGER fail_insert BEFORE INSERT ON files BEGIN SELECT RAISE(ABORT, 'test'); END"
+        )
     with pytest.raises(sqlite3.DatabaseError):
         indexer.index(root)
     assert repository.get_file_by_path(str(original)) is not None

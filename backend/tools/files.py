@@ -9,7 +9,9 @@ from tools.base import Tool
 
 class SearchFilesTool(Tool[SearchFilters]):
     name = "search_files"
-    description = "Search allowed indexed filenames and metadata, without scanning files."
+    description = (
+        "Search allowed indexed filenames and metadata, without scanning files."
+    )
     risk = RiskLevel.READ
     input_schema = SearchFilters
 
@@ -43,7 +45,9 @@ class OpenFileTool(Tool[FileIdInput]):
         self.service = service
 
     def execute(self, arguments: FileIdInput) -> dict[str, Any]:
-        return self.service.perform(arguments.file_id, "open_file").model_dump(mode="json")
+        return self.service.perform(arguments.file_id, "open_file").model_dump(
+            mode="json"
+        )
 
 
 class ShowInFolderTool(OpenFileTool):
@@ -51,4 +55,6 @@ class ShowInFolderTool(OpenFileTool):
     description = "Reveal an indexed file in Explorer via an explicit user action."
 
     def execute(self, arguments: FileIdInput) -> dict[str, Any]:
-        return self.service.perform(arguments.file_id, "show_in_folder").model_dump(mode="json")
+        return self.service.perform(arguments.file_id, "show_in_folder").model_dump(
+            mode="json"
+        )

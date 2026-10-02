@@ -1,4 +1,5 @@
 """Pin local path components during Windows shell dispatch; never read contents."""
+
 import ctypes
 from contextlib import contextmanager, ExitStack
 from pathlib import Path
@@ -16,14 +17,27 @@ class WindowsHandles:
     def __init__(self) -> None:
         self.api = ctypes.WinDLL("kernel32", use_last_error=True)
         signatures = {
-            "CreateFileW": ([wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
-                             ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
-                             wintypes.HANDLE], wintypes.HANDLE),
+            "CreateFileW": (
+                [
+                    wintypes.LPCWSTR,
+                    wintypes.DWORD,
+                    wintypes.DWORD,
+                    ctypes.c_void_p,
+                    wintypes.DWORD,
+                    wintypes.DWORD,
+                    wintypes.HANDLE,
+                ],
+                wintypes.HANDLE,
+            ),
             "CloseHandle": ([wintypes.HANDLE], wintypes.BOOL),
-            "GetFileInformationByHandleEx": ([wintypes.HANDLE, ctypes.c_int,
-                                             ctypes.c_void_p, wintypes.DWORD], wintypes.BOOL),
-            "GetFinalPathNameByHandleW": ([wintypes.HANDLE, wintypes.LPWSTR,
-                                          wintypes.DWORD, wintypes.DWORD], wintypes.DWORD),
+            "GetFileInformationByHandleEx": (
+                [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD],
+                wintypes.BOOL,
+            ),
+            "GetFinalPathNameByHandleW": (
+                [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD],
+                wintypes.DWORD,
+            ),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(self.api, name)
@@ -43,7 +57,9 @@ class WindowsHandles:
 
     def inspect(self, handle: int) -> tuple[Path, int]:
         info = AttributeTag()
-        if not self.api.GetFileInformationByHandleEx(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        if not self.api.GetFileInformationByHandleEx(
+            handle, 9, ctypes.byref(info), ctypes.sizeof(info)
+        ):
             raise ctypes.WinError(ctypes.get_last_error())
         buffer = ctypes.create_unicode_buffer(32768)
         length = self.api.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
@@ -57,7 +73,9 @@ class WindowsHandles:
 
 
 @contextmanager
-def pinned_file(policy: PathPolicy, path: Path, *, handles: WindowsHandles | None = None) -> Iterator[Path]:
+def pinned_file(
+    policy: PathPolicy, path: Path, *, handles: WindowsHandles | None = None
+) -> Iterator[Path]:
     safe = policy.validate(path, must_exist=True)
     native = handles if handles is not None else WindowsHandles()
     with ExitStack() as stack:
@@ -67,7 +85,9 @@ def pinned_file(policy: PathPolicy, path: Path, *, handles: WindowsHandles | Non
             stack.callback(native.close, handle)
             final, attributes = native.inspect(handle)
             if attributes & 0x400 or final != component:
-                raise PermissionError("The file path changed or contains a reparse point.")
+                raise PermissionError(
+                    "The file path changed or contains a reparse point."
+                )
             if bool(attributes & 0x10) != (component != safe):
                 raise PermissionError("The file path has an unexpected object type.")
         # Repeat allowlist validation while every component remains pinned.

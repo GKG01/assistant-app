@@ -24,7 +24,9 @@ class FakeHandles:
         self.closed.append(handle)
 
     def inspect(self, handle):
-        return handle, (0 if handle == self.target else 0x10) | (0x400 if handle == self.bad else 0)
+        return handle, (0 if handle == self.target else 0x10) | (
+            0x400 if handle == self.bad else 0
+        )
 
 
 def test_pins_all_components_until_dispatch_returns(tmp_path):
@@ -42,8 +44,11 @@ def test_pins_all_components_until_dispatch_returns(tmp_path):
 def test_failure_closes_handles_and_denies_dispatch(tmp_path, failure):
     target = tmp_path / "file.txt"
     target.touch()
-    native = FakeHandles(target, bad=tmp_path if failure == "reparse" else None,
-                         failure=target if failure == "sharing" else None)
+    native = FakeHandles(
+        target,
+        bad=tmp_path if failure == "reparse" else None,
+        failure=target if failure == "sharing" else None,
+    )
     if failure == "redirect":
         native.inspect = lambda handle: (Path("/outside"), 0x10)
     with pytest.raises((PermissionError, RuntimeError)):

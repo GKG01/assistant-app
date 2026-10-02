@@ -27,10 +27,12 @@ def test_refresh_uses_one_database_connection(file_stack, monkeypatch):
         (root / f"{i}.txt").touch()
     original = database.connect
     count = 0
+
     def connect():
         nonlocal count
         count += 1
         return original()
+
     monkeypatch.setattr(database, "connect", connect)
     indexer.index(root)
     assert count == 1

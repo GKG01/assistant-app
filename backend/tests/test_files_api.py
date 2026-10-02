@@ -20,8 +20,16 @@ def test_api_complete_flow(file_client, monkeypatch):
     file_id = response.json()["results"][0]["id"]
     assert client.get(f"/files/{file_id}").json()["name"] == "Resume.pdf"
     launched = []
-    monkeypatch.setattr(WindowsFileLauncher, "open_file", lambda self, path: launched.append(("open", path)))
-    monkeypatch.setattr(WindowsFileLauncher, "show_in_folder", lambda self, path: launched.append(("reveal", path)))
+    monkeypatch.setattr(
+        WindowsFileLauncher,
+        "open_file",
+        lambda self, path: launched.append(("open", path)),
+    )
+    monkeypatch.setattr(
+        WindowsFileLauncher,
+        "show_in_folder",
+        lambda self, path: launched.append(("reveal", path)),
+    )
     assert client.post(f"/files/{file_id}/open").status_code == 200
     assert client.post(f"/files/{file_id}/reveal").status_code == 200
     assert launched == [("open", file), ("reveal", file)]
@@ -31,12 +39,20 @@ def test_api_complete_flow(file_client, monkeypatch):
     assert client.get("/files/search").json()["total"] == 0
 
 
-@pytest.mark.parametrize("params", [
-    {"limit": 0}, {"limit": 201}, {"offset": -1}, {"sort": "DROP TABLE files"},
-    {"min_size": -1}, {"min_size": 10, "max_size": 1},
-    {"modified_after": "bad"}, {"extension": "../"},
-    {"modified_after": "2026-02-01", "modified_before": "2026-01-01"},
-])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"limit": 0},
+        {"limit": 201},
+        {"offset": -1},
+        {"sort": "DROP TABLE files"},
+        {"min_size": -1},
+        {"min_size": 10, "max_size": 1},
+        {"modified_after": "bad"},
+        {"extension": "../"},
+        {"modified_after": "2026-02-01", "modified_before": "2026-01-01"},
+    ],
+)
 def test_invalid_filters(file_client, params):
     response = file_client[0].get("/files/search", params=params)
     assert response.status_code == 422, response.text
@@ -44,12 +60,33 @@ def test_invalid_filters(file_client, params):
 
 def test_header_origin_and_arbitrary_roots_rejected(file_client):
     client, root = file_client
-    assert client.post("/files/index", json={"directory": str(root.parent)}).status_code == 422
-    assert client.post("/files/index", headers={"X-Nova-Request": ""}).status_code == 403
-    assert client.post("/files/index", headers={"Origin": "https://evil.example"}).status_code == 403
-    assert client.get("/files/search", params={"directory": str(root.parent)}).status_code == 403
-    assert client.get("/files/search", params={"directory": str(root / "..")}).status_code == 400
-    assert client.get("/files/search", params={"directory": str(root.parent / "documents-evil")}).status_code == 403
+    assert (
+        client.post("/files/index", json={"directory": str(root.parent)}).status_code
+        == 422
+    )
+    assert (
+        client.post("/files/index", headers={"X-Nova-Request": ""}).status_code == 403
+    )
+    assert (
+        client.post(
+            "/files/index", headers={"Origin": "https://evil.example"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get("/files/search", params={"directory": str(root.parent)}).status_code
+        == 403
+    )
+    assert (
+        client.get("/files/search", params={"directory": str(root / "..")}).status_code
+        == 400
+    )
+    assert (
+        client.get(
+            "/files/search", params={"directory": str(root.parent / "documents-evil")}
+        ).status_code
+        == 403
+    )
     assert client.post("/files/0/open").status_code == 422
     assert client.post("/files/999/open").status_code == 404
 
@@ -59,12 +96,16 @@ def test_executable_open_blocked(file_client, monkeypatch):
     (root / "bad.exe").touch()
     client.post("/files/index")
     file_id = client.get("/files/search").json()["results"][0]["id"]
-    monkeypatch.setattr(WindowsFileLauncher, "open_file", lambda *a: pytest.fail("Unsafe launch"))
+    monkeypatch.setattr(
+        WindowsFileLauncher, "open_file", lambda *a: pytest.fail("Unsafe launch")
+    )
     assert client.post(f"/files/{file_id}/open").status_code == 403
 
 
 def test_unconfigured_index(client):
-    assert client.post("/files/index", headers={"X-Nova-Request": "1"}).status_code == 400
+    assert (
+        client.post("/files/index", headers={"X-Nova-Request": "1"}).status_code == 400
+    )
 
 
 def test_missing_root_is_not_treated_as_deleted(file_client):
@@ -81,8 +122,10 @@ def test_missing_root_is_not_treated_as_deleted(file_client):
 
 def test_database_failure_is_sanitized(file_client, monkeypatch):
     client, _ = file_client
+
     def fail():
         raise sqlite3.OperationalError("sensitive internal path")
+
     monkeypatch.setattr(client.app.state.indexing, "refresh", fail)
     response = client.post("/files/index")
     assert response.status_code == 503
@@ -100,7 +143,9 @@ def test_unsupported_platform(file_client, monkeypatch):
     (root / "file.txt").touch()
     client.post("/files/index")
     file_id = client.get("/files/search").json()["results"][0]["id"]
+
     def unsupported(*args):
         raise NotImplementedError()
+
     monkeypatch.setattr(WindowsFileLauncher, "open_file", unsupported)
     assert client.post(f"/files/{file_id}/open").status_code == 501

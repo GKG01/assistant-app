@@ -1,4 +1,5 @@
 """Fixed Tauri child entry point. Receives a credential through its private stdin pipe."""
+
 import json
 import os
 import socket
@@ -46,10 +47,16 @@ def run() -> None:
         port = int(os.environ.get("NOVA_BACKEND_PORT", "8000"))
         listener.bind(("127.0.0.1", port))
         listener.listen(128)
-        server = uvicorn.Server(uvicorn.Config(
-            application, host="127.0.0.1", port=port, access_log=False,
-            log_level="warning", timeout_graceful_shutdown=3,
-        ))
+        server = uvicorn.Server(
+            uvicorn.Config(
+                application,
+                host="127.0.0.1",
+                port=port,
+                access_log=False,
+                log_level="warning",
+                timeout_graceful_shutdown=3,
+            )
+        )
 
         def watch_parent() -> None:
             # Parent keeps stdin open. EOF means the desktop exited or crashed.

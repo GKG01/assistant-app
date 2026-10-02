@@ -216,6 +216,18 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 
 ## Tests and checks
 
+GitHub Actions runs frontend formatting and TypeScript checks, backend formatting,
+and Rust formatting on all pull requests.
+
+Install backend development tools and check formatting from `backend/`:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m ruff format --check .
+```
+
+Use `python -m ruff format .` to apply backend formatting.
+
 From backend with the virtual environment activated:
 
 ```bash
@@ -231,12 +243,17 @@ symlink tests skip. Pure Windows path-syntax and mocked reparse checks run every
 From desktop:
 
 ```bash
+npm run format:check
 npm run typecheck
 npm run build
 ```
 
-No frontend lint command is configured. `package-lock.json` is retained; use
-`npm ci` for reproducible clean installs.
+Use `npm run format` to apply frontend formatting. `package-lock.json` is retained;
+use `npm ci` for reproducible clean installs.
+
+From the repository root, check the native host with
+`cargo +stable fmt --manifest-path desktop/src-tauri/Cargo.toml --all -- --check`.
+Remove `-- --check` to apply Rust formatting.
 
 ## Security and storage
 
