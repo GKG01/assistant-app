@@ -240,6 +240,13 @@ No frontend lint command is configured. `package-lock.json` is retained; use
 
 ## Security and storage
 
+Windows Open/Show in Folder validates and holds metadata handles for the file and
+its parent directories during dispatch. Reparse points, changed paths, and
+conflicting write/delete handles are rejected. An external viewer may open the
+path after these handles close; this is additional hardening, not complete race
+elimination. Windows-native validation: from `backend`, run
+`python -m pytest -q tests/permissions/test_windows_handles.py`.
+
 Tools are explicitly registered. READ operations run through the guard.
 INTERACTIVE open/reveal needs trusted direct-user context; model-shaped calls stay
 pending. WRITE remains pending; DESTRUCTIVE remains denied. There is no generic

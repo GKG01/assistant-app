@@ -114,6 +114,12 @@ per-launch session credential to the main window.
 
 ## Platform and deployment limits
 
+Windows Open/Reveal passes through `permissions/windows_handles.py` before native
+dispatch. Metadata handles pin each ancestor and target, deny write/delete sharing,
+and verify the handle's final path and reparse attributes. They remain held through
+dispatch and close on every exit. This does not bind asynchronous viewer access
+after dispatch, and does not change the indexer's path-based scanning.
+
 Windows APIs must run in the Windows-native Python process. Linux/WSL open/reveal
 return 501, with no shell fallback or path translation. The Tauri host starts
 the backend through `backend/managed.py`, owns its lifetime, and exposes only the

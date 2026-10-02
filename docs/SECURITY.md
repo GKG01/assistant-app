@@ -72,6 +72,13 @@ Open permits only .pdf, .txt, .csv, .png, .jpg, .jpeg, .gif, .bmp, .webp, .docx,
 and .pptx. Executables, scripts, shortcuts, HTML, SVG and unknown types are not launched.
 The guard and FileActionService revalidate paths immediately before Windows dispatch.
 os.startfile uses a fixed open verb without caller-controlled arguments.
+On Windows, FileActionService also pins every path component from the drive root
+to the file with metadata-only CreateFileW handles. OPEN_REPARSE_POINT prevents
+following the component itself; each handle's attributes and final DOS path are
+checked before proceeding. Write/delete sharing is denied, and all handles stay
+open through shell dispatch. Conflicting existing handles fail closed. Handles
+are released in reverse order on success or failure; no file contents are read.
+See [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
 Reveal uses typed native SHParseDisplayName/SHOpenFolderAndSelectItems calls, selecting
 the item in Explorer. There is no shell command construction or subprocess launcher.
 See [Microsoft's API contract](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shopenfolderandselectitems).
@@ -113,10 +120,11 @@ OPENAI_API_KEY remains an unused backend-only setting.
 
 ## Remaining limits
 
-- Path checks cannot atomically bind a pathname to the object later opened by a
-  viewer. Concurrent directory/reparse replacement races remain possible. Native
-  handle-based access would be needed for stronger guarantees; there are no file
-  mutations in this phase.
+- Windows open/reveal pins components during dispatch, but the external viewer or
+  Explorer may resolve the pathname after dispatch returns and handles close.
+  This reduces replacement races; it does not guarantee the viewer consumes the
+  validated object. Indexing/search still use path-based metadata checks. There
+  are no file mutations in this phase. Conflicting writers may prevent launch.
 - Hard links and changed mount topology are not a content-isolation boundary.
 - Reparse rejection may exclude OneDrive-backed folders even when user-visible.
 - System-directory detection is conservative, not a complete Windows known-folder API.
