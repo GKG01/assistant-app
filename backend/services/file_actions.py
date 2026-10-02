@@ -1,9 +1,11 @@
 import ctypes
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 
 from database.repositories.actions import ActionRepository
+from permissions.windows_handles import pinned_file
 from services.file_models import FileActionResponse
 from services.file_search import FileSearchService
 
@@ -77,10 +79,12 @@ class FileActionService:
                             arguments={"file_id": file_id}, result=None, status="requested")
         try:
             path = self.search.policy.validate(Path(file.path), must_exist=True)
-            if action == "open_file":
-                self.launcher.open_file(path)
-            else:
-                self.launcher.show_in_folder(path)
+            guard = pinned_file(self.search.policy, path) if os.name == "nt" else nullcontext(path)
+            with guard as pinned:
+                if action == "open_file":
+                    self.launcher.open_file(pinned)
+                else:
+                    self.launcher.show_in_folder(pinned)
         except (OSError, NotImplementedError):
             self.actions.record(user_command="Explicit file button", tool=action,
                                 arguments={"file_id": file_id}, result=None, status="failed")
