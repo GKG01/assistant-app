@@ -4,20 +4,39 @@ import stat
 from collections.abc import Sequence
 from pathlib import Path, PureWindowsPath
 
-WINDOWS_SYSTEM_NAMES = frozenset({
-    "windows", "program files", "program files (x86)", "programdata",
-    "$recycle.bin", "system volume information", "recovery",
-})
-UNIX_SYSTEM_ROOTS = ("/etc", "/usr", "/proc", "/sys", "/dev", "/bin",
-                     "/sbin", "/boot", "/root", "/var")
+WINDOWS_SYSTEM_NAMES = frozenset(
+    {
+        "windows",
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "$recycle.bin",
+        "system volume information",
+        "recovery",
+    }
+)
+UNIX_SYSTEM_ROOTS = (
+    "/etc",
+    "/usr",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/bin",
+    "/sbin",
+    "/boot",
+    "/root",
+    "/var",
+)
 
 
 def check_syntax(path: Path) -> None:
     raw = str(path)
     if not path.is_absolute():
         raise ValueError("An absolute native-platform path is required.")
-    if "\x00" in raw or any(part and set(part) == {"."} and len(part) >= 2
-                            for part in re.split(r"[/\\]", raw)):
+    if "\x00" in raw or any(
+        part and set(part) == {"."} and len(part) >= 2
+        for part in re.split(r"[/\\]", raw)
+    ):
         raise ValueError("Directory traversal is not permitted.")
     if raw.startswith(("\\\\", "//")):
         raise PermissionError("Network and device paths are not permitted.")
@@ -40,7 +59,9 @@ def check_windows_syntax(path: PureWindowsPath) -> None:
 def check_system_path(path: Path) -> None:
     if any(part.casefold() in WINDOWS_SYSTEM_NAMES for part in path.parts):
         raise PermissionError("System directories are not permitted.")
-    if os.name != "nt" and any(path.is_relative_to(root) for root in map(Path, UNIX_SYSTEM_ROOTS)):
+    if os.name != "nt" and any(
+        path.is_relative_to(root) for root in map(Path, UNIX_SYSTEM_ROOTS)
+    ):
         raise PermissionError("System directories are not permitted.")
 
 
@@ -51,7 +72,11 @@ def check_no_links(path: Path) -> None:
             info = component.lstat()
         except FileNotFoundError:
             continue
-        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or getattr(info, "st_file_attributes", 0)
+            & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
             raise PermissionError("Links and reparse points are not permitted.")
 
 
@@ -72,7 +97,11 @@ class PathPolicy:
     def validate(self, path: Path, *, must_exist: bool = False) -> Path:
         check_syntax(path)
         # First check lexical ancestry, so outside candidates are not stat'ed.
-        candidates = [root for root in self.roots if root.is_absolute() and path.is_relative_to(root)]
+        candidates = [
+            root
+            for root in self.roots
+            if root.is_absolute() and path.is_relative_to(root)
+        ]
         if not candidates:
             raise PermissionError("Path is outside configured allowed directories.")
         resolved = canonical_path(path)

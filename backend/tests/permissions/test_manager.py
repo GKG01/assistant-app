@@ -8,12 +8,15 @@ from permissions.policies import Decision, RiskLevel, classify
 from tools.calculator import CalculateTool
 
 
-@pytest.mark.parametrize(("risk", "decision"), [
-    (RiskLevel.READ, Decision.ALLOW),
-    (RiskLevel.INTERACTIVE, Decision.CONFIRM),
-    (RiskLevel.WRITE, Decision.CONFIRM),
-    (RiskLevel.DESTRUCTIVE, Decision.DENY),
-])
+@pytest.mark.parametrize(
+    ("risk", "decision"),
+    [
+        (RiskLevel.READ, Decision.ALLOW),
+        (RiskLevel.INTERACTIVE, Decision.CONFIRM),
+        (RiskLevel.WRITE, Decision.CONFIRM),
+        (RiskLevel.DESTRUCTIVE, Decision.DENY),
+    ],
+)
 def test_classification(risk, decision):
     assert classify(risk) == decision
 
@@ -42,7 +45,9 @@ def test_read_dispatch_and_validation():
     registry = ToolRegistry()
     registry.register(CalculateTool())
     manager = PermissionManager(registry)
-    result = manager.dispatch(ToolCall(tool="calculate", arguments={"operation": "add", "operands": [1, 2]}))
+    result = manager.dispatch(
+        ToolCall(tool="calculate", arguments={"operation": "add", "operands": [1, 2]})
+    )
     assert result.status == "completed"
     assert result.data == {"value": 3}
     assert manager.dispatch(ToolCall(tool="calculate")).status == "error"

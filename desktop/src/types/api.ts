@@ -24,7 +24,13 @@ export interface SearchFilters {
   modified_before?: string;
   min_size?: number;
   max_size?: number;
-  sort?: "name_asc" | "name_desc" | "modified_asc" | "modified_desc" | "size_asc" | "size_desc";
+  sort?:
+    | "name_asc"
+    | "name_desc"
+    | "modified_asc"
+    | "modified_desc"
+    | "size_asc"
+    | "size_desc";
   limit?: number;
   offset?: number;
 }

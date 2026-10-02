@@ -17,10 +17,15 @@ def test_tools_share_index_and_enforce_paths(file_stack, monkeypatch, tmp_path):
     file = root / "resume.txt"
     file.touch()
     indexer.index(root)
-    monkeypatch.setattr("os.scandir", lambda *a: pytest.fail("Search scanned filesystem"))
+    monkeypatch.setattr(
+        "os.scandir", lambda *a: pytest.fail("Search scanned filesystem")
+    )
     response = SearchFilesTool(search).execute(SearchFilters(q="resume"))
     file_id = response["results"][0]["id"]
-    assert GetFileInfoTool(search).execute(FileIdInput(file_id=file_id))["name"] == "resume.txt"
+    assert (
+        GetFileInfoTool(search).execute(FileIdInput(file_id=file_id))["name"]
+        == "resume.txt"
+    )
     with pytest.raises(FileNotFoundError):
         GetFileInfoTool(search).execute(FileIdInput(file_id=99999))
     search.policy.roots = ()
@@ -69,8 +74,10 @@ def test_audit_failure_prevents_launch(file_stack, monkeypatch):
     indexer.index(root)
     launcher = Mock(spec=WindowsFileLauncher)
     actions = ActionRepository(database)
+
     def fail(**kwargs):
         raise sqlite3.OperationalError("database unavailable")
+
     monkeypatch.setattr(actions, "record", fail)
     service = FileActionService(search, actions, launcher)
     with pytest.raises(sqlite3.OperationalError):

@@ -23,4 +23,6 @@ def test_5000_file_refresh(file_stack):
     assert second.created == second.removed == 0
     assert results.total == 5000
     assert len(results.results) == 200
-    print(f"5000 files: first={first.duration_ms}ms refresh={second.duration_ms}ms total+search={elapsed:.3f}s")
+    print(
+        f"5000 files: first={first.duration_ms}ms refresh={second.duration_ms}ms total+search={elapsed:.3f}s"
+    )

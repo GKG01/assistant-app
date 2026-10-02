@@ -11,7 +11,11 @@ class FileSearchService:
         self.policy = policy
 
     def search(self, filters: SearchFilters) -> SearchResponse:
-        directory = str(self.policy.validate(Path(filters.directory))) if filters.directory else None
+        directory = (
+            str(self.policy.validate(Path(filters.directory)))
+            if filters.directory
+            else None
+        )
         return self.repository.search_files(filters, self.policy.permits, directory)
 
     def get_file_info(self, file_id: int) -> IndexedFile:
