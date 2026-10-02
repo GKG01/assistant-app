@@ -217,7 +217,7 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 ## Tests and checks
 
 GitHub Actions runs frontend formatting and TypeScript checks, backend formatting,
-and Rust formatting on pushes and pull requests.
+and Rust formatting on all pull requests.
 
 Install backend development tools and check formatting from `backend/`:
 
