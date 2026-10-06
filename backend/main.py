@@ -9,6 +9,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from api import agent, files, health, voice
 from agent.tool_registry import ToolRegistry
+from agent.agent import Agent
 from config.settings import Settings
 from database.database import Database
 from database.repositories.files import FileRepository
@@ -22,10 +23,15 @@ from services.file_indexing import FileIndexingService, IndexBusyError
 from services.file_actions import FileActionService, WindowsFileLauncher
 from tools.calculator import CalculateTool
 from tools.files import SearchFilesTool, GetFileInfoTool, OpenFileTool, ShowInFolderTool
+from services.llm.base import LLMProvider
+from services.llm.openai_provider import OpenAIProvider
 
 
 def create_app(
-    settings: Settings | None = None, *, session_token: str | None = None
+    settings: Settings | None = None,
+    *,
+    session_token: str | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> FastAPI:
     configuration = settings if settings is not None else Settings()
     desktop_session = DesktopSession(session_token)
@@ -64,10 +70,18 @@ def create_app(
             registry.register(tool)
         app.state.database = database
         app.state.permissions = PermissionManager(registry)
-        yield
+        provider = (
+            llm_provider if llm_provider is not None else OpenAIProvider(configuration)
+        )
+        app.state.agent = Agent(provider)
+        try:
+            yield
+        finally:
+            await provider.close()
 
     application = FastAPI(title="Nova Backend", version="0.1.0", lifespan=lifespan)
     application.state.desktop_session = desktop_session
+    application.add_middleware(agent.AgentBodyLimitMiddleware)
 
     @application.get("/session")
     def session_status(request: Request) -> dict[str, str]:

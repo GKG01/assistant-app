@@ -1,15 +1,16 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. AI and voice remain
-stubs: no provider key is required and no model is called.
+Phase 2 provides deterministic local file indexing and search. Feature 3.1 adds
+text-only AI responses through OpenAI. The backend still starts without a provider
+key; deterministic file features remain available. Voice remains a stub.
 
 ## Architecture and stack
 
 React, strict TypeScript, Vite, Tailwind CSS, and Tauri 2 form the desktop.
 Python 3.12+, FastAPI, Pydantic v2, and standard-library SQLite form the backend.
 
-- **BRAIN:** future reasoning, isolated behind a provider interface.
+- **BRAIN:** text generation, isolated behind a provider interface; no tools yet.
 - **HANDS:** explicit metadata search/info and Windows open/reveal tools.
 - **GUARD:** registered risk, direct-user-action checks, and centralized path policy.
 
@@ -22,7 +23,7 @@ nova/
 │   ├── agent/               # Explicit registry and future reasoning contracts
 │   ├── permissions/         # Risk dispatch and path policy
 │   ├── tools/               # Calculator, search/info, open/reveal
-│   ├── services/            # Shared file application logic; provider stubs
+│   ├── services/            # Shared file application logic; LLM provider
 │   ├── indexer/             # Metadata scanner
 │   ├── database/            # Schema migration and repositories
 │   ├── config/
@@ -44,8 +45,10 @@ See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md).
 - Windows-native default-app opening of supported document/image types and Explorer selection.
 - Guarded calculator and file tools, with automated tests using temporary files.
 
-Agent and voice routes return 501. Send and Mic stay disabled. No LLM, content
-extraction, embeddings, background watchers, or file move/rename/delete operations exist.
+POST /agent/message returns text from the configured LLM. Tools are NOT connected
+to the LLM. The voice route returns 501; Send and Mic stay disabled until later UI
+integration. No conversation memory, content extraction, embeddings, background
+watchers, or file move/rename/delete operations exist.
 
 ## Prerequisites
 
@@ -134,7 +137,10 @@ backend after editing it.
 | --- | --- | --- |
 | NOVA_ENV | development | Environment label |
 | NOVA_DATABASE_PATH | data/nova.db | Repository-relative or absolute SQLite path |
-| OPENAI_API_KEY | empty | Reserved, unused provider secret |
+| OPENAI_API_KEY | empty | Backend-only provider secret; optional for non-AI features |
+| OPENAI_MODEL | gpt-4.1-mini | Responses-compatible text model |
+| OPENAI_TIMEOUT_SECONDS | 30 | Total AI request deadline; greater than 0, at most 120 |
+| OPENAI_MAX_OUTPUT_TOKENS | 1024 | Output cap including reasoning; 16–16384 |
 | NOVA_ALLOWED_DIRECTORIES | [] | JSON array of explicit absolute native paths |
 
 Example (replace with your real folders):
@@ -214,6 +220,68 @@ warnings. Invalid filters return 422, disallowed paths/types 403, missing files
 404, overlapping refresh requests 409, and unsupported Windows actions 501.
 The UI waits up to ten minutes for refresh. A client timeout does not cancel a scan.
 
+## Feature 3.1: text-only AI
+
+Install the updated backend requirements. Set these in the repository-root `.env`
+(ignored by Git), or in the backend process environment, then restart the backend:
+
+```dotenv
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_TIMEOUT_SECONDS=30
+OPENAI_MAX_OUTPUT_TOKENS=1024
+```
+
+Fill in `OPENAI_API_KEY` locally; never put it in frontend configuration or source.
+Only the key is required for AI. The other values above are defaults. Use a model
+available to your API account that supports text generation through Responses.
+The timeout is a total request deadline (maximum 120 seconds); SDK retries are
+explicitly disabled. Output is capped at 1,024 tokens by default (including any
+reasoning tokens); incomplete responses are reported as provider failures.
+
+From `backend/`, start the standalone backend:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+From a second PowerShell terminal:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/agent/message -ContentType 'application/json' -Body '{"message":"Reply with exactly: Nova online"}'
+```
+
+On WSL/Linux, use `.venv/bin/python` in place of the Windows Python path, then:
+
+```bash
+curl -sS http://127.0.0.1:8000/health
+curl -sS http://127.0.0.1:8000/agent/message -H 'Content-Type: application/json' -d '{"message":"Reply with exactly: Nova online"}'
+```
+
+A successful response contains `message` plus the existing `result: null` and
+`pending_action: null` placeholders. Every request is independent. Asking to open
+or search files only produces text; no action can execute. The prompt asks Nova
+to explain this limitation, but model text can still be inaccurate.
+
+Messages must contain 1–10,000 characters and cannot be whitespace-only. Raw bodies
+are capped at 128 KiB before JSON parsing, including chunked requests. Invalid
+messages return 422; oversized bodies 413. Missing keys, authentication errors,
+and connection failures return 503; rate limits 429; timeouts 504; invalid, empty,
+incomplete or failed provider responses 502. Errors use `detail` with safe text.
+
+This text-only endpoint is available to local API clients without a desktop session;
+JSON content type is required and untrusted browser origins are rejected. Keep the
+server on loopback: local processes can still consume your provider quota. File
+APIs retain their separate managed-desktop authentication requirement.
+
+The provider sends the system prompt and your message to OpenAI with `store=False`.
+Nova does not save chat history or log prompts/responses; provider-side data handling
+still applies. No indexed metadata, file contents, tool definitions, or credentials
+are included in the model input. Without a key, `/health` and managed desktop file
+operations work, while `/agent/message` returns "Nova's AI provider is not configured."
+
 ## Tests and checks
 
 GitHub Actions runs frontend formatting and TypeScript checks, backend formatting,
@@ -236,6 +304,8 @@ pytest -m performance -s
 ```
 
 Tests create temporary files, mock launch operations, and never launch real viewers.
+Agent tests use fake providers; SDK tests use in-memory HTTP transports. Automated
+tests do not call OpenAI.
 The performance test creates 5,000 empty temporary files and measures two refreshes
 plus search, without a hard timing threshold. On Windows without symlink privileges,
 symlink tests skip. Pure Windows path-syntax and mocked reparse checks run everywhere.
@@ -281,9 +351,8 @@ see [Security](docs/SECURITY.md) for the implemented boundary and limits.
 
 ## Next step
 
-Validate native Windows Open/Show in Folder with a disposable local folder.
-Phase 3 can then add provider-neutral single-step reasoning over these existing
-READ tools with strict output validation and permission-bypass tests. Voice,
-WRITE confirmation, and packaging remain separate future work.
+Feature 3.2 — Read-Only Tool Calling, reviewed separately. Feature 3.1 does not
+connect ToolRegistry to the model. Native Windows Open/Show in Folder validation,
+voice, WRITE confirmation, and packaging remain separate work.
 
 MIT licensed; see [LICENSE](LICENSE).

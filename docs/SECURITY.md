@@ -3,9 +3,9 @@
 ## Trust boundary
 
 The frontend is not a security boundary. Every indexed, returned, inspected, or
-launched file passes deterministic backend policy. BRAIN remains unimplemented;
-future models only propose registered ToolCalls. They receive no shell, generic
-subprocess, code evaluation, arbitrary filesystem, or direct database capability.
+launched file passes deterministic backend policy. Feature 3.1 BRAIN generates
+text only. The LLM has no tools, shell, generic subprocess, Python evaluation,
+filesystem, or database access. ToolRegistry is not passed to the agent/provider.
 This is an application boundary, not an OS sandbox against a compromised account.
 
 Tauri has one narrowly scoped custom command, `backend_session`, available only
@@ -115,8 +115,43 @@ Policy rejections, searches, and indexing are not comprehensively audit-logged y
 
 SQLite metadata and action history are unencrypted and may reveal filenames and paths.
 Protect them using OS account permissions. .env, SQLite files, virtual environments,
-and generated artifacts remain ignored. No new secret or external integration exists;
-OPENAI_API_KEY remains an unused backend-only setting.
+and generated artifacts remain ignored. OPENAI_API_KEY is used only by the backend
+provider as described below.
+
+## Feature 3.1 AI isolation and secrets
+
+`OPENAI_API_KEY` comes from backend settings/environment (including the ignored
+root `.env`) and is held as `SecretStr` until SDK construction. It is never exposed
+through React, API responses, or application logs. `.env.example` has an empty key.
+Model/timeout/output settings are backend-only; restart after changing them.
+
+OpenAI SDK calls and types are isolated in OpenAIProvider. The only outbound model
+input is Nova's system prompt and the submitted user message. No file contents,
+indexed metadata, database access, registry definitions, executable instructions,
+or credentials are provided as model context. A tool-shaped text response is plain
+text, never parsed for execution. Unexpected structured tool output is rejected.
+There is no agent loop, memory, write operation, or confirmation flow in Feature 3.1.
+The prompt discourages false action claims; lack of executable capabilities is
+what enforces the security boundary. It cannot guarantee truthful model prose.
+
+Text is sent to the cloud provider. `store=False` disables response storage through
+this API option; it is not a claim of zero provider retention. Nova does not persist
+chat history. Logs contain request start/completion, duration, and safe failure
+categories, never full prompts, responses, raw exceptions, or headers. SDK/transport
+debug logging is suppressed to avoid payload logging. Do not override these logging
+levels when handling sensitive information.
+
+The client is lazy, with a bounded total timeout and token cap, and retries disabled.
+Missing keys affect AI requests only; deterministic file features and health remain
+available. Failure responses use fixed messages rather than provider error bodies.
+Request validation rejects blank or oversized messages, and raw body limits apply
+before parsing, even without Content-Length.
+
+Unlike file operations, the text-only agent API is available to standalone local
+clients without a desktop token. It requires JSON and rejects untrusted Origin or
+cross-site Fetch Metadata. Existing host/CORS protections apply. Local processes
+can call it and incur provider usage; this is not authentication or quota control.
+Keep the backend bound to loopback. Broader usage controls belong to later hardening.
 
 ## Remaining limits
 

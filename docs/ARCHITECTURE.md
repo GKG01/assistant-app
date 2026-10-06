@@ -1,7 +1,8 @@
 # Architecture
 
-Phase 2 extends the Phase 1 boundaries. BRAIN (future reasoning) remains a stub.
+Feature 3.1 extends the existing boundaries with text-only BRAIN responses.
 HANDS provides explicit file tools. GUARD controls execution and path access.
+The LLM is not connected to HANDS or GUARD dispatch.
 
 ```mermaid
 flowchart TD
@@ -30,6 +31,37 @@ flowchart TD
     Repository --> SQLite[(SQLite)]
 ```
 
+## Feature 3.1 provider boundary
+
+```mermaid
+flowchart TD
+    UI[React / Tauri: chat wiring deferred] --> API[FastAPI POST /agent/message]
+    API --> Agent[Agent.respond: application service]
+    Agent --> Provider[LLMProvider.generate]
+    Provider --> OpenAI[OpenAIProvider]
+    OpenAI --> Remote[OpenAI Responses API]
+    Registry[ToolRegistry: NOT connected to the LLM]
+```
+
+The existing `Agent` is the application service; it receives only an `LLMProvider`,
+adds Nova's system prompt, and converts a Nova-owned `LLMReply` into `AgentResponse`.
+`generate(message, system_prompt=...)` has no tool input. SDK objects and error types
+stay in `services/llm/openai_provider.py`. The existing `tool_call` reply placeholder
+is rejected if populated; API `result` and `pending_action` remain null.
+
+`create_app` composes one provider and agent per application lifespan, accepts an
+injected provider for tests, and closes it on shutdown. The async SDK client is
+created lazily on the first configured AI request and reused. No network call or
+API key is needed at startup. Settings own model, timeout, and output limits.
+There is one request, no retries, no agent loop, no conversation IDs or history.
+The Responses payload contains only model, instructions, input, max_output_tokens,
+and store=False. No tools, files, database objects or registry descriptions are sent.
+
+The route validates JSON/origin, with a path-scoped 128 KiB body middleware and
+10,000-character Pydantic message limit. Provider-neutral failure categories map
+to fixed HTTP `detail` messages. The provider logs timing and categories only.
+SDK debug/body logging is suppressed. See README for settings and error statuses.
+
 ## Composition and reuse
 
 The FastAPI application factory owns settings and composes repositories, PathPolicy,
@@ -37,9 +69,9 @@ FileIndexer, FileIndexingService, FileSearchService, and FileActionService at st
 Tools receive those same services. HTTP search and the future AI search_files tool
 therefore share one implementation. SQL stays in database modules.
 
-The agent/provider and speech interfaces remain unchanged. No LLM loop or voice
-implementation is added. The only registered tools are calculate, search_files,
-get_file_info, open_file, and show_in_folder.
+The agent/provider stubs now support text generation. The speech interface remains
+a stub. No LLM loop or voice implementation is added. The only registered tools
+are calculate, search_files, get_file_info, open_file, and show_in_folder.
 
 ## Guard and user interaction
 
@@ -126,5 +158,5 @@ the backend through `backend/managed.py`, owns its lifetime, and exposes only th
 `backend_session` command to the trusted main window. Windows GUI behavior must
 be tested on Windows; Linux tests mock the OS boundary.
 
-No ORM, background watcher, external service, user login system, or new
-frontend dependency was introduced.
+No ORM, background watcher, user login system, or new frontend dependency was
+introduced. OpenAI is the optional external text-generation service.
