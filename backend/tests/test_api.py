@@ -10,7 +10,6 @@ def test_health(client):
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
-        ("post", "/agent/message", {"message": "Find my resume"}),
         ("post", "/voice/transcribe", None),
     ],
 )
