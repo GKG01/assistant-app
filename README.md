@@ -222,6 +222,22 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 
 ## Feature 3.1: text-only AI
 
+### Pending live verification — postponed 2026-10-10
+
+Automated tests with mocked providers passed, but successful text generation from
+the real OpenAI API remains **unverified**. A manual request returned HTTP 429
+with Nova's `rate_limit` error. The tester reported not having added API credits;
+missing credits are the suspected cause, not a confirmed provider diagnosis.
+Live verification is intentionally postponed until API credits are available.
+
+- [ ] Once credits are available, run the manual request below with
+  `Reply with exactly: Nova online`. Confirm HTTP 200 and a real text response
+  in `message`, with `result` and `pending_action` both null.
+- [ ] Record the verification date, configured model, and outcome here, without
+  recording the API key. Until then, do not mark live integration as verified.
+
+### Configuration and manual test
+
 Install the updated backend requirements. Set these in the repository-root `.env`
 (ignored by Git), or in the backend process environment, then restart the backend:
 
