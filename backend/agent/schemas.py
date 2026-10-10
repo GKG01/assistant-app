@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from permissions.policies import RiskLevel
 
@@ -13,6 +13,13 @@ class Contract(BaseModel):
 
 class AgentRequest(Contract):
     message: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("message")
+    @classmethod
+    def nonblank_message(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Message must not be blank.")
+        return value.strip()
 
 
 class ToolCall(Contract):
