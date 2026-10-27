@@ -43,11 +43,17 @@ class WindowsHandles:
             function = getattr(self.api, name)
             function.argtypes, function.restype = arguments, result
 
-    def open(self, path: Path) -> int:
+    def open(self, path: Path, *, pin_name: bool = False) -> int:
         # READ_ATTRIBUTES, SHARE_READ only, OPEN_EXISTING, BACKUP_SEMANTICS |
-        # OPEN_REPARSE_POINT. Denying write/delete sharing pins each component
-        # and fails safely if a conflicting writer already holds it open.
-        handle = self.api.CreateFileW(str(path), 0x80, 1, None, 3, 0x02200000, None)
+        # OPEN_REPARSE_POINT. Request DELETE on the indexed path subtree because
+        # attribute-only handles do not reliably prevent rename operations. The
+        # handle is never used to mutate; omitting FILE_SHARE_DELETE blocks other
+        # handles from requesting delete/rename access. Ancestors above the
+        # configured root are inspected but do not require delete permissions.
+        desired_access = 0x80 | (0x00010000 if pin_name else 0)
+        handle = self.api.CreateFileW(
+            str(path), desired_access, 1, None, 3, 0x02200000, None
+        )
         if handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         return handle
@@ -78,10 +84,17 @@ def pinned_file(
 ) -> Iterator[Path]:
     safe = policy.validate(path, must_exist=True)
     native = handles if handles is not None else WindowsHandles()
+    allowed_roots = []
+    for root in policy.roots:
+        try:
+            allowed_roots.append(policy.validate(root))
+        except (OSError, ValueError, RuntimeError):
+            continue
     with ExitStack() as stack:
         # Root first: OPEN_REPARSE_POINT alone does not protect intermediate folders.
         for component in (*reversed(safe.parents), safe):
-            handle = native.open(component)
+            pin_name = any(component.is_relative_to(root) for root in allowed_roots)
+            handle = native.open(component, pin_name=pin_name)
             stack.callback(native.close, handle)
             final, attributes = native.inspect(handle)
             if attributes & 0x400 or final != component:
