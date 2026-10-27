@@ -12,11 +12,14 @@ class FakeHandles:
         self.target, self.bad, self.failure = target, bad, failure
         self.active = []
         self.closed = []
+        self.name_pins = []
 
-    def open(self, path):
+    def open(self, path, *, pin_name=False):
         if path == self.failure:
             raise PermissionError("Sharing violation")
         self.active.append(path)
+        if pin_name:
+            self.name_pins.append(path)
         return path
 
     def close(self, handle):
@@ -36,6 +39,7 @@ def test_pins_all_components_until_dispatch_returns(tmp_path):
     with pinned_file(PathPolicy([tmp_path]), target, handles=native) as safe:
         assert safe == target
         assert native.active == [*reversed(target.parents), target]
+        assert native.name_pins == [tmp_path, target]
     assert native.active == []
     assert native.closed == [target, *target.parents]
 
