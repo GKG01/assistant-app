@@ -10,10 +10,14 @@ class PermissionManager:
         self._registry = registry
 
     def dispatch(
-        self, call: ToolCall, *, user_initiated: bool = False
+        self, call: ToolCall, *, user_initiated: bool = False, read_only: bool = False
     ) -> ToolResult | PendingAction:
         # Risk comes from trusted registration, never from model-supplied arguments.
         tool = self._registry.get(call.tool)
+        if read_only and tool.risk != RiskLevel.READ:
+            return ToolResult(
+                tool=tool.name, status="denied", message="Only READ tools are allowed."
+            )
         decision = classify(tool.risk)
         if decision == Decision.DENY:
             return ToolResult(

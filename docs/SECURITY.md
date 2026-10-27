@@ -3,9 +3,9 @@
 ## Trust boundary
 
 The frontend is not a security boundary. Every indexed, returned, inspected, or
-launched file passes deterministic backend policy. Feature 3.1 BRAIN generates
-text only. The LLM has no tools, shell, generic subprocess, Python evaluation,
-filesystem, or database access. ToolRegistry is not passed to the agent/provider.
+launched file passes deterministic backend policy. Feature 3.2 BRAIN may request
+only approved read-only tools. It has no shell, generic subprocess, arbitrary Python,
+direct filesystem or database access. The provider receives schemas, never executors.
 This is an application boundary, not an OS sandbox against a compromised account.
 
 Tauri has one narrowly scoped custom command, `backend_session`, available only
@@ -118,21 +118,49 @@ Protect them using OS account permissions. .env, SQLite files, virtual environme
 and generated artifacts remain ignored. OPENAI_API_KEY is used only by the backend
 provider as described below.
 
-## Feature 3.1 AI isolation and secrets
+## Feature 3.2 AI isolation and secrets
 
 `OPENAI_API_KEY` comes from backend settings/environment (including the ignored
 root `.env`) and is held as `SecretStr` until SDK construction. It is never exposed
 through React, API responses, or application logs. `.env.example` has an empty key.
 Model/timeout/output settings are backend-only; restart after changing them.
 
-OpenAI SDK calls and types are isolated in OpenAIProvider. The only outbound model
-input is Nova's system prompt and the submitted user message. No file contents,
-indexed metadata, database access, registry definitions, executable instructions,
-or credentials are provided as model context. A tool-shaped text response is plain
-text, never parsed for execution. Unexpected structured tool output is rejected.
-There is no agent loop, memory, write operation, or confirmation flow in Feature 3.1.
-The prompt discourages false action claims; lack of executable capabilities is
-what enforces the security boundary. It cannot guarantee truthful model prose.
+OpenAI SDK calls and types remain isolated in OpenAIProvider. Model context now
+includes approved schemas and bounded tool results, including filenames, full paths
+and indexed metadata for authenticated file requests. No file contents or credentials
+are sent. Ordinary tool-shaped prose is never parsed for execution; only structured
+function-call items may request execution. Missing/invalid/duplicate call IDs,
+incomplete responses and unsupported provider tool types fail closed.
+
+The agent adapter uses an explicit allowlist: `calculate`, `search_files`,
+`get_file_info`. It checks the exact registered implementation and READ classification,
+validates strict Pydantic JSON schemas with unknown fields forbidden, then dispatches
+through the existing PermissionManager with `read_only=True`. The guard independently
+rejects every non-READ risk before execution. No module scanning, dynamic imports,
+attribute resolution, user-supplied risk or confirmation flags are used. Registered
+open/reveal and all WRITE/DESTRUCTIVE tools remain unavailable to the agent.
+
+Search uses the existing SQLite repository and current PathPolicy; directory filters
+cannot widen allowed roots. Info accepts a bounded indexed ID, never an arbitrary
+path. No content reads were added. The calculator evaluates a restricted arithmetic
+AST without eval/exec: only numeric literals, signs, addition, subtraction,
+multiplication, division and parentheses; functions, names, attributes and powers
+are rejected. Expressions are limited to 500 characters, 100 nodes, and finite
+intermediate magnitudes no greater than 1e100.
+
+Agent limits are 5 provider iterations, 10 total tool calls, 4 per response, 8 KiB
+argument JSON and 16 KiB serialized result per call. Search defaults to 20 records
+and permits at most 50. Oversized search results lose whole records with explicit
+truncation metadata; other oversized results return an error. No invalid JSON slices
+are sent. Limits stop execution and return a partial-completion message; no hidden
+extra model call is made. Synchronous tools run sequentially in the bounded shared
+threadpool. Provider deadlines apply per call, not across the whole agent loop.
+
+Filenames, paths and tool results are untrusted data. They are JSON-serialized tool
+outputs, never system instructions or executable input. The concise prompt reinforces
+this distinction, but deterministic capability restrictions enforce it. These controls
+do not guarantee truthful model prose; expanded grounding belongs to Feature 3.3.
+There is no persisted conversation, write confirmation or background autonomy.
 
 Text is sent to the cloud provider. `store=False` disables response storage through
 this API option; it is not a claim of zero provider retention. Nova does not persist
@@ -141,14 +169,16 @@ categories, never full prompts, responses, raw exceptions, or headers. SDK/trans
 debug logging is suppressed to avoid payload logging. Do not override these logging
 levels when handling sensitive information.
 
-The client is lazy, with a bounded total timeout and token cap, and retries disabled.
+The client is lazy, with a bounded timeout and token cap per provider call, and retries disabled.
 Missing keys affect AI requests only; deterministic file features and health remain
 available. Failure responses use fixed messages rather than provider error bodies.
 Request validation rejects blank or oversized messages, and raw body limits apply
 before parsing, even without Content-Length.
 
-Unlike file operations, the text-only agent API is available to standalone local
-clients without a desktop token. It requires JSON and rejects untrusted Origin or
+Text and calculator requests remain available to standalone local clients without
+a desktop token. Agent file tools require the same managed Bearer session and
+`X-Nova-Request: 1` header as direct file operations. Without authorization, those
+schemas are omitted and any attempted file calls are denied. It requires JSON and rejects untrusted Origin or
 cross-site Fetch Metadata. Existing host/CORS protections apply. Local processes
 can call it and incur provider usage; this is not authentication or quota control.
 Keep the backend bound to loopback. Broader usage controls belong to later hardening.
@@ -170,7 +200,7 @@ Keep the backend bound to loopback. Broader usage controls belong to later harde
 - Linux tests cover native-independent policy and mock Windows launches; they do
   not certify Windows shell associations, Explorer selection, or real junction races.
 
-Future reasoning must use the existing READ tools and continue treating filenames
-and tool results as untrusted data. Durable WRITE confirmations and distribution
+Future reasoning must preserve the existing READ tool boundary and continue treating
+filenames and tool results as untrusted data. Durable WRITE confirmations and distribution
 hardening remain separate tasks; the current session credential is not a user
 login or a full OS security boundary.

@@ -10,6 +10,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from api import agent, files, health, voice
 from agent.tool_registry import ToolRegistry
 from agent.agent import Agent
+from agent.tool_execution import AgentToolExecutor
 from config.settings import Settings
 from database.database import Database
 from database.repositories.files import FileRepository
@@ -73,7 +74,9 @@ def create_app(
         provider = (
             llm_provider if llm_provider is not None else OpenAIProvider(configuration)
         )
-        app.state.agent = Agent(provider)
+        app.state.agent = Agent(
+            provider, AgentToolExecutor(registry, app.state.permissions)
+        )
         try:
             yield
         finally:

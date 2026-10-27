@@ -41,7 +41,7 @@ def test_agent_sends_prompt_returns_text_without_history():
         ("Hello Nova", SYSTEM_PROMPT),
         ("Open my resume", SYSTEM_PROMPT),
     ]
-    assert "no tools" in SYSTEM_PROMPT
+    assert "search_files" in SYSTEM_PROMPT
     assert "Do not claim" in SYSTEM_PROMPT
 
 
