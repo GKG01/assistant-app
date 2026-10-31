@@ -284,8 +284,7 @@ searching real files. Requesting a search does not index files automatically.
 The provider receives your prompt, tool schemas, and bounded returned metadata
 (including filenames and full paths for authorized file requests). No file contents
 are sent. `store=False` is used; provider-side data handling still applies. Nova
-neither persists chat history nor logs prompts/results/secrets. Model prose can
-still be inaccurate; stronger grounding is planned for Feature 3.3.
+neither persists chat history nor logs prompts/results/secrets. Feature 3.3 adds conservative backend grounding of tool-assisted responses.
 
 ### Manual testing
 
@@ -403,3 +402,31 @@ Native Windows Open/Show in Folder validation,
 voice, WRITE confirmation, and packaging remain separate work.
 
 MIT licensed; see [LICENSE](LICENSE).
+
+
+## Feature 3.3: grounded responses
+
+Request → orchestrator → model tool request → registry, validation and permissions
+→ deterministic execution → verified result → model response → grounding → response.
+Request-local execution records distinguish rejection, start, completion and failure.
+The permission manager signals the actual execution start. Records are not persisted.
+The existing result envelope gains `status`: SUCCESS, NO_RESULTS, NOT_FOUND,
+INVALID_ARGUMENTS, UNKNOWN_TOOL, PERMISSION_DENIED, TOOL_ERROR or
+EXECUTION_LIMIT_REACHED. Legacy error_code fields remain compatible. Provider
+failures retain sanitized HTTP errors and never retry tools.
+
+File responses use backend-rendered JSON metadata labeled as untrusted data;
+multiple total matches ask the user to narrow the request, even with pagination.
+Empty pages with nonzero totals are not described as no matches. Failure text is
+fixed and sanitized. Calculator prose is retained only for exact verified numeric
+answers; other answers use deterministic values. Ordinary text remains available.
+A conservative keyword guard blocks common unverified local-action claims in
+text-only responses; it is not a general natural-language truth verifier and can
+produce false positives or miss paraphrases. Tool-assisted file prose is deliberately
+conservative. Indexed metadata can be stale until refresh.
+
+Tool strings remain JSON data, never privileged instructions. The existing exact
+READ-tool allowlist, desktop authorization and filesystem policy remain authoritative.
+No new tools, frontend, memory or Features 3.4–3.8 are introduced.
+Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
+Existing manual commands and provider configuration apply unchanged.

@@ -1,12 +1,13 @@
 """The model-facing subset of the existing registry; no dynamic resolution."""
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from agent.schemas import ToolCall, ToolResult
+from agent.schemas import ToolCall, ToolResult, ExecutionRecord
 from agent.tool_registry import ToolRegistry, UnknownToolError
 from permissions.manager import PermissionManager
 from permissions.policies import RiskLevel
@@ -56,6 +57,10 @@ APPROVED = {
 def error(code: str, message: str) -> dict[str, Any]:
     return {
         "success": False,
+        "status": {
+            "EXECUTION_FAILURE": "TOOL_ERROR",
+            "RESULT_TOO_LARGE": "EXECUTION_LIMIT_REACHED",
+        }.get(code, code),
         "data": None,
         "error_code": code,
         "error_message": message,
@@ -116,9 +121,34 @@ class AgentToolExecutor:
                 )
         return definitions
 
-    def execute(self, call: LLMToolCall, *, file_access: bool) -> str:
+    def execute_record(
+        self, call: LLMToolCall, *, file_access: bool
+    ) -> ExecutionRecord:
+        record = ExecutionRecord(tool_call_id=call.id, tool_name=call.name)
+        record.result = json.loads(
+            self.execute(call, file_access=file_access, record=record)
+        )
+        record.state = (
+            ("completed" if record.result["success"] else "failed")
+            if record.executed
+            else "rejected"
+        )
+        logging.getLogger(__name__).info(
+            "Tool outcome state=%s status=%s", record.state, record.result["status"]
+        )
+        return record
+
+    def execute(
+        self,
+        call: LLMToolCall,
+        *,
+        file_access: bool,
+        record: ExecutionRecord | None = None,
+    ) -> str:
         try:
-            return bounded_result(self._execute(call, file_access=file_access))
+            return bounded_result(
+                self._execute(call, file_access=file_access, record=record)
+            )
         except FileNotFoundError:
             return encode(
                 error("NOT_FOUND", "Indexed file no longer exists or was not found.")
@@ -132,7 +162,13 @@ class AgentToolExecutor:
                 error("EXECUTION_FAILURE", "The tool could not complete the request.")
             )
 
-    def _execute(self, call: LLMToolCall, *, file_access: bool) -> dict[str, Any]:
+    def _execute(
+        self,
+        call: LLMToolCall,
+        *,
+        file_access: bool,
+        record: ExecutionRecord | None = None,
+    ) -> dict[str, Any]:
         try:
             tool = self.registry.get(call.name)
         except UnknownToolError:
@@ -157,9 +193,16 @@ class AgentToolExecutor:
             return error(
                 "INVALID_ARGUMENTS", "Tool arguments do not match the supported schema."
             )
+
+        def started() -> None:
+            if record is not None:
+                record.executed = True
+                record.state = "started"
+
         result = self.permissions.dispatch(
             ToolCall(tool=call.name, arguments=arguments.model_dump(mode="json")),
             read_only=True,
+            **({"on_start": started} if record is not None else {}),
         )
         if not isinstance(result, ToolResult) or result.status == "denied":
             return error("PERMISSION_DENIED", "Only approved READ tools may execute.")
@@ -174,6 +217,9 @@ class AgentToolExecutor:
             data["truncated"] = data["total"] > data["offset"] + data["returned"]
         return {
             "success": True,
+            "status": "NO_RESULTS"
+            if call.name == "search_files" and data["total"] == 0
+            else "SUCCESS",
             "data": data,
             "error_code": None,
             "error_message": None,
