@@ -1,6 +1,8 @@
 from starlette.concurrency import run_in_threadpool
 
-from agent.schemas import AgentRequest, AgentResponse
+from agent.schemas import AgentRequest, AgentResponse, ExecutionRecord
+from agent.grounding import grounded_message
+from agent.tool_execution import encode
 from agent.prompts import SYSTEM_PROMPT
 from agent.tool_execution import AgentToolExecutor
 from services.llm.base import LLMError, LLMProvider, LLMToolResultMessage, LLMToolTurn
@@ -21,6 +23,7 @@ class Agent:
     async def respond(
         self, request: AgentRequest, *, file_access: bool = False
     ) -> AgentResponse:
+        records: list[ExecutionRecord] = []
         turns: list[LLMToolTurn] = []
         seen_ids: set[str] = set()
         definitions = (
@@ -39,7 +42,9 @@ class Agent:
                 if not reply.tool_calls:
                     if not reply.text or not reply.text.strip():
                         raise LLMError("invalid_response")
-                    return AgentResponse(message=reply.text.strip())
+                    return AgentResponse(
+                        message=grounded_message(reply.text.strip(), records)
+                    )
                 ids = [call.id for call in reply.tool_calls]
                 if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
                     raise LLMError("invalid_response")
@@ -54,9 +59,11 @@ class Agent:
                 seen_ids.update(ids)
                 results = []
                 for call in reply.tool_calls:
-                    output = await run_in_threadpool(
-                        self._tools.execute, call, file_access=file_access
+                    record = await run_in_threadpool(
+                        self._tools.execute_record, call, file_access=file_access
                     )
+                    records.append(record)
+                    output = encode(record.result)
                     results.append(LLMToolResultMessage(call_id=call.id, output=output))
                 turns.append(LLMToolTurn(reply=reply, results=results))
             return AgentResponse(message=LIMIT_MESSAGE)

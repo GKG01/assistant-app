@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from pydantic import ValidationError
 
 from agent.schemas import PendingAction, ToolCall, ToolResult
@@ -10,7 +12,12 @@ class PermissionManager:
         self._registry = registry
 
     def dispatch(
-        self, call: ToolCall, *, user_initiated: bool = False, read_only: bool = False
+        self,
+        call: ToolCall,
+        *,
+        user_initiated: bool = False,
+        read_only: bool = False,
+        on_start: Callable[[], None] | None = None,
     ) -> ToolResult | PendingAction:
         # Risk comes from trusted registration, never from model-supplied arguments.
         tool = self._registry.get(call.tool)
@@ -40,6 +47,8 @@ class PermissionManager:
                 arguments=arguments.model_dump(mode="json"),
                 risk=tool.risk,
             )
+        if on_start is not None:
+            on_start()
         try:
             return ToolResult(
                 tool=tool.name, status="completed", data=tool.execute(arguments)

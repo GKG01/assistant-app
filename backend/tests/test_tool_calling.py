@@ -398,10 +398,9 @@ def test_api_tool_result_and_file_auth(tmp_path):
         headers = {"Authorization": f"Bearer {token}", "X-Nova-Request": "1"}
         assert client.post("/files/index", headers=headers).status_code == 200
         assert (
-            client.post(
-                "/agent/message", json={"message": "search"}, headers=headers
-            ).json()["message"]
-            == "found"
+            client.post("/agent/message", json={"message": "search"}, headers=headers)
+            .json()["message"]
+            .startswith("Indexed matches: 1")
         )
         assert (
             json.loads(provider.requests[5][1]["turns"][0].results[0].output)["data"][
