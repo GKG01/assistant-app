@@ -6,7 +6,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent.agent import Agent
 from agent.schemas import AgentRequest, AgentResponse
-from api.files import TRUSTED_ORIGINS
+from api.files import TRUSTED_ORIGINS, require_file_client
 from services.llm.base import LLMError
 
 # Enough for 10,000 JSON-escaped Unicode characters, but bound bytes before parsing.
@@ -62,10 +62,18 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 @router.post("/message", response_model=AgentResponse)
 async def message(
-    request: AgentRequest, agent: Annotated[Agent, Depends(get_agent)]
+    request: AgentRequest,
+    http_request: Request,
+    agent: Annotated[Agent, Depends(get_agent)],
 ) -> AgentResponse:
+    file_access = False
     try:
-        return await agent.respond(request)
+        require_file_client(http_request)
+        file_access = True
+    except HTTPException:
+        pass  # Text and arithmetic retain standalone access; file tools fail closed.
+    try:
+        return await agent.respond(request, file_access=file_access)
     except LLMError as exc:
         status, detail = ERROR_RESPONSES[exc.category]
         raise HTTPException(status, detail) from None

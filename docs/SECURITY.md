@@ -3,9 +3,9 @@
 ## Trust boundary
 
 The frontend is not a security boundary. Every indexed, returned, inspected, or
-launched file passes deterministic backend policy. Feature 3.1 BRAIN generates
-text only. The LLM has no tools, shell, generic subprocess, Python evaluation,
-filesystem, or database access. ToolRegistry is not passed to the agent/provider.
+launched file passes deterministic backend policy. BRAIN may request
+only the five explicitly approved tools, with separate interaction policy. It has no shell, generic subprocess, arbitrary Python,
+direct filesystem or database access. The provider receives schemas, never executors.
 This is an application boundary, not an OS sandbox against a compromised account.
 
 Tauri has one narrowly scoped custom command, `backend_session`, available only
@@ -55,7 +55,7 @@ after the existence check fails.
 | Risk | Behavior |
 | --- | --- |
 | READ | Registered calculate/search/info may execute after input validation |
-| INTERACTIVE | Open/reveal require direct user initiation; otherwise pending |
+| INTERACTIVE | Direct user initiation, or explicit AI reveal policy; AI opening always pending |
 | WRITE | Pending only; no execution/confirmation API |
 | DESTRUCTIVE | Denied |
 
@@ -118,21 +118,47 @@ Protect them using OS account permissions. .env, SQLite files, virtual environme
 and generated artifacts remain ignored. OPENAI_API_KEY is used only by the backend
 provider as described below.
 
-## Feature 3.1 AI isolation and secrets
+## Feature 3.2 AI isolation and secrets
 
 `OPENAI_API_KEY` comes from backend settings/environment (including the ignored
 root `.env`) and is held as `SecretStr` until SDK construction. It is never exposed
 through React, API responses, or application logs. `.env.example` has an empty key.
 Model/timeout/output settings are backend-only; restart after changing them.
 
-OpenAI SDK calls and types are isolated in OpenAIProvider. The only outbound model
-input is Nova's system prompt and the submitted user message. No file contents,
-indexed metadata, database access, registry definitions, executable instructions,
-or credentials are provided as model context. A tool-shaped text response is plain
-text, never parsed for execution. Unexpected structured tool output is rejected.
-There is no agent loop, memory, write operation, or confirmation flow in Feature 3.1.
-The prompt discourages false action claims; lack of executable capabilities is
-what enforces the security boundary. It cannot guarantee truthful model prose.
+OpenAI SDK calls and types remain isolated in OpenAIProvider. Model context now
+includes approved schemas and bounded tool results, including filenames, full paths
+and indexed metadata for authenticated file requests. No file contents or credentials
+are sent. Ordinary tool-shaped prose is never parsed for execution; only structured
+function-call items may request execution. Missing/invalid/duplicate call IDs,
+incomplete responses and unsupported provider tool types fail closed.
+
+The agent adapter uses an explicit allowlist: `calculate`, `search_files`,
+`get_file_info`, `open_file`, `show_in_folder`. It checks exact registered implementations
+and expected READ or INTERACTIVE classifications, validates strict Pydantic JSON
+schemas with unknown fields forbidden, then dispatches through PermissionManager.
+READ tools retain `read_only=True`; interactions use the explicit policy below. No module scanning, dynamic imports,
+attribute resolution, user-supplied risk or confirmation flags are used. All WRITE/DESTRUCTIVE tools remain unavailable to the agent.
+
+Search uses the existing SQLite repository and current PathPolicy; directory filters
+cannot widen allowed roots. Info accepts a bounded indexed ID, never an arbitrary
+path. No content reads were added. The calculator evaluates a restricted arithmetic
+AST without eval/exec: only numeric literals, signs, addition, subtraction,
+multiplication, division and parentheses; functions, names, attributes and powers
+are rejected. Expressions are limited to 500 characters, 100 nodes, and finite
+intermediate magnitudes no greater than 1e100.
+
+Agent limits are 5 provider iterations, 10 total tool calls, 4 per response, 8 KiB
+argument JSON and 16 KiB serialized result per call. Search defaults to 20 records
+and permits at most 50. Oversized search results lose whole records with explicit
+truncation metadata; other oversized results return an error. No invalid JSON slices
+are sent. Limits stop execution and return a partial-completion message; no hidden
+extra model call is made. Synchronous tools run sequentially in the bounded shared
+threadpool. Provider deadlines apply per call, not across the whole agent loop.
+
+Filenames, paths and tool results are untrusted data. They are JSON-serialized tool
+outputs, never system instructions or executable input. The concise prompt reinforces
+this distinction, but deterministic capability restrictions enforce it. Feature 3.3 projects verified file results and failures into final responses.
+There is no persisted conversation, write confirmation or background autonomy.
 
 Text is sent to the cloud provider. `store=False` disables response storage through
 this API option; it is not a claim of zero provider retention. Nova does not persist
@@ -141,14 +167,16 @@ categories, never full prompts, responses, raw exceptions, or headers. SDK/trans
 debug logging is suppressed to avoid payload logging. Do not override these logging
 levels when handling sensitive information.
 
-The client is lazy, with a bounded total timeout and token cap, and retries disabled.
+The client is lazy, with a bounded timeout and token cap per provider call, and retries disabled.
 Missing keys affect AI requests only; deterministic file features and health remain
 available. Failure responses use fixed messages rather than provider error bodies.
 Request validation rejects blank or oversized messages, and raw body limits apply
 before parsing, even without Content-Length.
 
-Unlike file operations, the text-only agent API is available to standalone local
-clients without a desktop token. It requires JSON and rejects untrusted Origin or
+Text and calculator requests remain available to standalone local clients without
+a desktop token. Agent file tools require the same managed Bearer session and
+`X-Nova-Request: 1` header as direct file operations. Without authorization, those
+schemas are omitted and any attempted file calls are denied. It requires JSON and rejects untrusted Origin or
 cross-site Fetch Metadata. Existing host/CORS protections apply. Local processes
 can call it and incur provider usage; this is not authentication or quota control.
 Keep the backend bound to loopback. Broader usage controls belong to later hardening.
@@ -170,7 +198,71 @@ Keep the backend bound to loopback. Broader usage controls belong to later harde
 - Linux tests cover native-independent policy and mock Windows launches; they do
   not certify Windows shell associations, Explorer selection, or real junction races.
 
-Future reasoning must use the existing READ tools and continue treating filenames
-and tool results as untrusted data. Durable WRITE confirmations and distribution
+Future reasoning must preserve the existing explicit tool boundary and continue treating
+filenames and tool results as untrusted data. Durable WRITE confirmations and distribution
 hardening remain separate tasks; the current session credential is not a user
 login or a full OS security boundary.
+
+
+## Feature 3.3: grounded responses
+
+Request → orchestrator → model tool request → registry, validation and permissions
+→ deterministic execution → verified result → model response → grounding → response.
+Request-local execution records distinguish rejection, start, completion and failure.
+The permission manager signals the actual execution start. Records are not persisted.
+The existing result envelope gains `status`: SUCCESS, NO_RESULTS, NOT_FOUND,
+INVALID_ARGUMENTS, UNKNOWN_TOOL, PERMISSION_DENIED, TOOL_ERROR or
+EXECUTION_LIMIT_REACHED. Legacy error_code fields remain compatible. Provider
+failures retain sanitized HTTP errors and never retry tools.
+
+File responses use backend-rendered JSON metadata labeled as untrusted data;
+multiple total matches ask the user to narrow the request, even with pagination.
+Empty pages with nonzero totals are not described as no matches. Failure text is
+fixed and sanitized. Calculator prose is retained only for exact verified numeric
+answers; other answers use deterministic values. Ordinary text remains available.
+A conservative keyword guard blocks common unverified local-action claims in
+text-only responses; it is not a general natural-language truth verifier and can
+produce false positives or miss paraphrases. Tool-assisted file prose is deliberately
+conservative. Indexed metadata can be stale until refresh.
+
+Tool strings remain JSON data, never privileged instructions. The existing exact
+tool allowlist, desktop authorization and filesystem policy remain authoritative.
+Feature 3.4 extends this boundary as documented below. No frontend, memory or
+Features 3.5–3.8 are introduced.
+Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
+Existing manual commands and provider configuration apply unchanged.
+
+## Feature 3.4 OS interaction authorization
+
+The model supplies only a strict bounded positive indexed file ID. Paths are resolved
+from SQLite but never trusted solely because they are stored there. Shared preflight
+and execution enforce canonical allowed-directory paths, no links/reparse points,
+existence and regular-file type. Pending requests also validate their targets.
+Unknown fields reject command lines, executable selection, working directories,
+environment overrides, confirmation flags and arbitrary paths.
+
+INTERACTIVE remains distinct from READ. AI opening always requires confirmation;
+there is no confirm/resume endpoint, and model/user prose saying “confirmed” does
+not authorize execution. Existing direct buttons remain explicit separate actions.
+AI reveal defaults pending; `NOVA_ALLOW_AGENT_REVEAL=true` explicitly authorizes
+only reveal for authenticated desktop requests. It cannot authorize open, WRITE
+or DESTRUCTIVE operations. Changing this backend setting requires restart.
+
+The existing Phase 2 document/media extension allowlist is reused, case-insensitively.
+Executables, scripts, shortcuts and unknown extensions fail with
+`UNSUPPORTED_FILE_TYPE` before any launch. Reveal may select these files but never
+opens them. Even allowed types and Explorer previews can invoke vulnerable handlers.
+Filename instructions and shell metacharacters remain path data, never commands.
+The native launcher uses fixed Windows APIs with no shell interpolation. No model
+can add tools or change permissions through metadata.
+
+Within a search-to-interaction request, the latest search must identify exactly one
+returned file with the requested ID. Ambiguous, failed, empty or mismatched searches
+cannot cause an interaction. Final responses report pending/failure or OS acceptance,
+never successful rendering. Permission/argument/execution states are request-local;
+this is not the persistent audit system planned for Feature 3.8.
+
+Immediate path revalidation and Windows pinned handles reduce replacement races but
+do not bind an asynchronous viewer after dispatch. WSL/Linux have no launch fallback.
+Offline tests mock native launch operations and use temporary files/SQLite and fake
+providers; they do not certify real Explorer behavior, file associations or live OpenAI.

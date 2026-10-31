@@ -1,8 +1,8 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. Feature 3.1 adds
-text-only AI responses through OpenAI. The backend still starts without a provider
+Phase 2 provides deterministic local file indexing and search. Features 3.1–3.4 add
+AI responses, bounded structured tool calling, grounding, and guarded file interactions. The backend still starts without a provider
 key; deterministic file features remain available. Voice remains a stub.
 
 ## Architecture and stack
@@ -10,7 +10,7 @@ key; deterministic file features remain available. Voice remains a stub.
 React, strict TypeScript, Vite, Tailwind CSS, and Tauri 2 form the desktop.
 Python 3.12+, FastAPI, Pydantic v2, and standard-library SQLite form the backend.
 
-- **BRAIN:** text generation, isolated behind a provider interface; no tools yet.
+- **BRAIN:** provider-neutral text generation and structured tool requests.
 - **HANDS:** explicit metadata search/info and Windows open/reveal tools.
 - **GUARD:** registered risk, direct-user-action checks, and centralized path policy.
 
@@ -20,7 +20,7 @@ nova/
 ├── desktop/src-tauri/       # Minimal native host; no filesystem/shell permissions
 ├── backend/
 │   ├── api/                 # FastAPI HTTP contracts
-│   ├── agent/               # Explicit registry and future reasoning contracts
+│   ├── agent/               # Explicit registry and bounded agent orchestration
 │   ├── permissions/         # Risk dispatch and path policy
 │   ├── tools/               # Calculator, search/info, open/reveal
 │   ├── services/            # Shared file application logic; LLM provider
@@ -45,8 +45,8 @@ See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md).
 - Windows-native default-app opening of supported document/image types and Explorer selection.
 - Guarded calculator and file tools, with automated tests using temporary files.
 
-POST /agent/message returns text from the configured LLM. Tools are NOT connected
-to the LLM. The voice route returns 501; Send and Mic stay disabled until later UI
+POST /agent/message returns text from the configured LLM, optionally using approved
+tools: calculate, search_files, get_file_info, open_file, and show_in_folder. The voice route returns 501; Send and Mic stay disabled until later UI
 integration. No conversation memory, content extraction, embeddings, background
 watchers, or file move/rename/delete operations exist.
 
@@ -139,9 +139,10 @@ backend after editing it.
 | NOVA_DATABASE_PATH | data/nova.db | Repository-relative or absolute SQLite path |
 | OPENAI_API_KEY | empty | Backend-only provider secret; optional for non-AI features |
 | OPENAI_MODEL | gpt-4.1-mini | Responses-compatible text model |
-| OPENAI_TIMEOUT_SECONDS | 30 | Total AI request deadline; greater than 0, at most 120 |
+| OPENAI_TIMEOUT_SECONDS | 30 | Deadline per provider call; greater than 0, at most 120 |
 | OPENAI_MAX_OUTPUT_TOKENS | 1024 | Output cap including reasoning; 16–16384 |
 | NOVA_ALLOWED_DIRECTORIES | [] | JSON array of explicit absolute native paths |
+| NOVA_ALLOW_AGENT_REVEAL | false | Explicitly allow AI Explorer reveal for authenticated desktop requests; never authorizes AI opening |
 
 Example (replace with your real folders):
 
@@ -220,83 +221,116 @@ warnings. Invalid filters return 422, disallowed paths/types 403, missing files
 404, overlapping refresh requests 409, and unsupported Windows actions 501.
 The UI waits up to ten minutes for refresh. A client timeout does not cancel a scan.
 
-## Feature 3.1: text-only AI
+## Feature 3.2: read-only AI tool calling
 
-### Pending live verification — postponed 2026-10-10
+Features 3.1–3.4 are implemented. Each `/agent/message` request is independent;
+there is no persistent conversation, chat UI integration, or write confirmation.
+The existing response shape remains `message`, `result: null`, `pending_action: null`.
 
-Automated tests with mocked providers passed, but successful text generation from
-the real OpenAI API remains **unverified**. A manual request returned HTTP 429
-with Nova's `rate_limit` error. The tester reported not having added API credits;
-missing credits are the suspected cause, not a confirmed provider diagnosis.
-Live verification is intentionally postponed until API credits are available.
+The agent sends approved schemas to the provider, receives structured tool calls,
+validates JSON arguments, resolves the existing registry, checks the permission
+manager, executes deterministic tools in the shared bounded threadpool, and returns
+structured results to the model for its final text response. Ordinary model prose
+is never parsed as a command. Only these tools are exposed:
 
-- [ ] Once credits are available, run the manual request below with
-  `Reply with exactly: Nova online`. Confirm HTTP 200 and a real text response
-  in `message`, with `result` and `pending_action` both null.
-- [ ] Record the verification date, configured model, and outcome here, without
-  recording the API key. Until then, do not mark live integration as verified.
+| Tool | Model-facing arguments |
+| --- | --- |
+| `calculate` | Required `expression`: 1–500 characters; numeric literals, `+ - * /`, unary signs, parentheses, decimals |
+| `search_files` | Optional `query` (filename substring), `extension`, `directory`, `modified_after`, `modified_before`, `min_size`, `max_size`, `sort`, `limit`, `offset` |
+| `get_file_info` | Required `file_id`: integer 1–9223372036854775807 |
+| `open_file` | Same strict `file_id`; confirmation required, no AI launch |
+| `show_in_folder` | Same strict `file_id`; explicit backend policy or confirmation required |
 
-### Configuration and manual test
+Search reuses the SQLite metadata index; no scan or content read occurs. `query`
+maps to the existing file API's `q`. Sort values are `name_asc`, `name_desc`,
+`modified_asc` (oldest first), `modified_desc` (default), `size_asc`, `size_desc`.
+Limit defaults to 20 and accepts 1–50; offset accepts 0–1,000,000. Dates must be
+ISO 8601 strings, with timezone-free values interpreted as UTC. Size bounds are
+inclusive integers from 0 to 2^63−1. Query/extension/directory limits are 500/30/4096
+characters. Unknown fields, coercible wrong types, and invalid ranges are rejected.
+The direct file API retains its existing 50 default / 200 maximum page size.
 
-Install the updated backend requirements. Set these in the repository-root `.env`
-(ignored by Git), or in the backend process environment, then restart the backend:
+Every execution uses PermissionManager. READ tools retain their READ-only constraint;
+open/reveal retain INTERACTIVE risk and the policy described below. Tool names,
+implementation types and risk classifications must match the explicit allowlist.
+Existing direct UI/API actions retain their explicit user authorization.
+No shell, arbitrary Python, unrestricted SQL or file-content capability is exposed.
+The calculator uses a restricted arithmetic AST, with at most 100 nodes and finite
+intermediate magnitudes at most 1e100; no functions, variables, powers or attributes.
+The existing deterministic operation/operands calculator contract remains supported
+outside the agent.
 
-```dotenv
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_TIMEOUT_SECONDS=30
-OPENAI_MAX_OUTPUT_TOKENS=1024
+Limits per request: **5 provider calls**, **10 tool calls**, **4 calls per model
+response**, **8 KiB argument JSON per call**, **16 KiB serialized result per call**.
+Calls run sequentially. An over-budget batch is not executed; the last iteration
+cannot start more tools. The API returns a controlled partial-completion message.
+Search results include `total`, `returned`, and `truncated`; whole records are removed
+when necessary to fit the byte cap, preserving valid JSON. Other oversized results
+return `RESULT_TOO_LARGE`. Empty searches succeed with an empty `results` array.
+Tool failures return fixed structured errors to the model, without exception details.
+
+### Configuration and access
+
+Set backend-only `OPENAI_API_KEY` in the ignored root `.env` or process environment.
+Defaults are `OPENAI_MODEL=gpt-4.1-mini`, `OPENAI_TIMEOUT_SECONDS=30`, and
+`OPENAI_MAX_OUTPUT_TOKENS=1024`. Use an account-accessible Responses model supporting
+function calling. Restart after changes. SDK retries are disabled; timeout and token
+caps apply to each provider call, so a tool-assisted request can take longer than
+one timeout period. No key is required to start the backend or use deterministic files.
+
+Standalone `/agent/message` clients can use text and arithmetic. File tools require
+**the same managed desktop Bearer credential and `X-Nova-Request: 1` header as the
+file API**. Without them, file tools are omitted and explicit model requests for
+those tools are denied. This prevents the agent from bypassing Phase 2's access gate.
+Configure `NOVA_ALLOWED_DIRECTORIES` and refresh the index through the desktop before
+searching real files. Requesting a search does not index files automatically.
+
+The provider receives your prompt, tool schemas, and bounded returned metadata
+(including filenames and full paths for authorized file requests). No file contents
+are sent. `store=False` is used; provider-side data handling still applies. Nova
+neither persists chat history nor logs prompts/results/secrets. Feature 3.3 adds conservative backend grounding of tool-assisted responses.
+
+### Manual testing
+
+From `backend/` on WSL/Linux:
+
+```bash
+.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-Fill in `OPENAI_API_KEY` locally; never put it in frontend configuration or source.
-Only the key is required for AI. The other values above are defaults. Use a model
-available to your API account that supports text generation through Responses.
-The timeout is a total request deadline (maximum 120 seconds); SDK retries are
-explicitly disabled. Output is capped at 1,024 tokens by default (including any
-reasoning tokens); incomplete responses are reported as provider failures.
-
-From `backend/`, start the standalone backend:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-From a second PowerShell terminal:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/agent/message -ContentType 'application/json' -Body '{"message":"Reply with exactly: Nova online"}'
-```
-
-On WSL/Linux, use `.venv/bin/python` in place of the Windows Python path, then:
+In another terminal:
 
 ```bash
 curl -sS http://127.0.0.1:8000/health
 curl -sS http://127.0.0.1:8000/agent/message -H 'Content-Type: application/json' -d '{"message":"Reply with exactly: Nova online"}'
+curl -sS http://127.0.0.1:8000/agent/message -H 'Content-Type: application/json' -d '{"message":"What is 5293 + 824 + 192? Use the calculator tool."}'
 ```
 
-A successful response contains `message` plus the existing `result: null` and
-`pending_action: null` placeholders. Every request is independent. Asking to open
-or search files only produces text; no action can execute. The prompt asks Nova
-to explain this limitation, but model text can still be inaccurate.
+To verify real tool execution, run this opt-in check from `backend/`:
 
-Messages must contain 1–10,000 characters and cannot be whitespace-only. Raw bodies
-are capped at 128 KiB before JSON parsing, including chunked requests. Invalid
-messages return 422; oversized bodies 413. Missing keys, authentication errors,
-and connection failures return 503; rate limits 429; timeouts 504; invalid, empty,
-incomplete or failed provider responses 502. Errors use `detail` with safe text.
+```bash
+.venv/bin/python -m scripts.check_agent_tools
+```
 
-This text-only endpoint is available to local API clients without a desktop session;
-JSON content type is required and untrusted browser origins are rejected. Keep the
-server on loopback: local processes can still consume your provider quota. File
-APIs retain their separate managed-desktop authentication requirement.
+On Windows use `.\.venv\Scripts\python.exe` in place of `.venv/bin/python`, and
+`curl.exe` in place of `curl`. The check calls the real OpenAI provider through
+FastAPI's in-process test client. It indexes temporary synthetic files into a
+temporary SQLite database, supplies a temporary desktop credential, and verifies
+successful calculator/search/info dispatches for four requests. It reports only
+HTTP status and tool names/status, never the API key. It requires API credits.
+No server process or changes to your personal index are required for this check.
 
-The provider sends the system prompt and your message to OpenAI with `store=False`.
-Nova does not save chat history or log prompts/responses; provider-side data handling
-still applies. No indexed metadata, file contents, tool definitions, or credentials
-are included in the model input. Without a key, `/health` and managed desktop file
-operations work, while `/agent/message` returns "Nova's AI provider is not configured."
+**Live integration remains unverified.** During Feature 3.2 validation no API key
+was configured, so live requests were skipped. The earlier Feature 3.1 manual
+attempt returned HTTP 429; suspected missing credits were not confirmed.
+Automated tests use fake providers and in-memory SDK transports, never real API calls.
+
+Messages accept 1–10,000 nonblank characters; raw bodies are capped at 128 KiB.
+Invalid requests return 422, oversized bodies 413. Missing key/authentication/network
+failures return 503, rate limits 429, provider timeouts 504, malformed/incomplete
+provider responses 502. Errors contain safe fixed text. `/health` remains available.
+JSON and trusted browser-origin requirements remain enforced. Keep the server on
+loopback; local processes can consume provider quota, and this is not a user login.
 
 ## Tests and checks
 
@@ -351,8 +385,8 @@ elimination. Windows-native validation: from `backend`, run
 `python -m pytest -q tests/permissions/test_windows_handles.py`.
 
 Tools are explicitly registered. READ operations run through the guard.
-INTERACTIVE open/reveal needs trusted direct-user context; model-shaped calls stay
-pending. WRITE remains pending; DESTRUCTIVE remains denied. There is no generic
+INTERACTIVE opening needs trusted direct-user context. AI reveal requires the
+explicit backend setting; otherwise model requests remain confirmation-required. WRITE remains pending; DESTRUCTIVE remains denied. There is no generic
 shell, subprocess, code-evaluation, or direct model database capability.
 
 SQLite migrates Phase 1 to schema version 2, preserving existing IDs and actions.
@@ -367,8 +401,102 @@ see [Security](docs/SECURITY.md) for the implemented boundary and limits.
 
 ## Next step
 
-Feature 3.2 — Read-Only Tool Calling, reviewed separately. Feature 3.1 does not
-connect ToolRegistry to the model. Native Windows Open/Show in Folder validation,
+Feature 3.5 — Conversation Context. Features 3.5–3.8 are not implemented.
+Native Windows Open/Show in Folder validation,
 voice, WRITE confirmation, and packaging remain separate work.
 
 MIT licensed; see [LICENSE](LICENSE).
+
+
+## Feature 3.3: grounded responses
+
+Request → orchestrator → model tool request → registry, validation and permissions
+→ deterministic execution → verified result → model response → grounding → response.
+Request-local execution records distinguish rejection, start, completion and failure.
+The permission manager signals the actual execution start. Records are not persisted.
+The existing result envelope gains `status`: SUCCESS, NO_RESULTS, NOT_FOUND,
+INVALID_ARGUMENTS, UNKNOWN_TOOL, PERMISSION_DENIED, TOOL_ERROR or
+EXECUTION_LIMIT_REACHED. Legacy error_code fields remain compatible. Provider
+failures retain sanitized HTTP errors and never retry tools.
+
+File responses use backend-rendered JSON metadata labeled as untrusted data;
+multiple total matches ask the user to narrow the request, even with pagination.
+Empty pages with nonzero totals are not described as no matches. Failure text is
+fixed and sanitized. Calculator prose is retained only for exact verified numeric
+answers; other answers use deterministic values. Ordinary text remains available.
+A conservative keyword guard blocks common unverified local-action claims in
+text-only responses; it is not a general natural-language truth verifier and can
+produce false positives or miss paraphrases. Tool-assisted file prose is deliberately
+conservative. Indexed metadata can be stale until refresh.
+
+Tool strings remain JSON data, never privileged instructions. The existing exact
+tool allowlist, desktop authorization and filesystem policy remain authoritative.
+Feature 3.4 extends this boundary as documented below. No frontend, memory or
+Features 3.5–3.8 are introduced.
+Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
+Existing manual commands and provider configuration apply unchanged.
+
+## Feature 3.4: file interaction tools
+
+`open_file(file_id)` and `show_in_folder(file_id)` share Phase 2's tools,
+FileActionService, SQLite ID lookup, canonical path policy, and Windows launcher.
+Only positive strict integer IDs up to 2^63−1 are accepted. Extra fields, paths,
+commands, application arguments and model-supplied confirmation are rejected.
+Both tools require the existing managed desktop session and file request header.
+
+Opening always returns `CONFIRMATION_REQUIRED` for a valid supported file, without
+launching it. There is no confirmation/resume endpoint: use the existing desktop
+Open button as a separate direct action. Reveal also defaults to confirmation.
+Set `NOVA_ALLOW_AGENT_REVEAL=true` in backend configuration and restart to explicitly
+permit AI reveal. This never permits AI opening or writes. The existing document
+allowlist is reused case-insensitively: `.pdf .txt .csv .png .jpg .jpeg .gif .bmp
+.webp .docx .xlsx .pptx`. All other types (including scripts, executables and shortcuts)
+return `UNSUPPORTED_FILE_TYPE` for opening; they may be revealed under reveal policy.
+The Phase 2 allowlist is retained for compatibility, not a guarantee of content safety.
+
+Paths are revalidated even for pending requests. Missing records/files, replaced
+directories, outside paths and symlink/reparse escapes fail safely. A chained
+interaction requires the latest search in that request to return exactly one match
+and the requested ID; pagination does not make an ambiguous search unique. Narrow
+searches are allowed within the same request; no history survives the request.
+
+Structured results retain `success`, `status`, `data`, `error_code`, `error_message`.
+New statuses include `CONFIRMATION_REQUIRED`, `UNSUPPORTED_FILE_TYPE`, `OS_ERROR`,
+and `UNSUPPORTED_PLATFORM`. Validation/permission failures use existing statuses.
+Request-local execution records track argument validation, permission approval,
+confirmation required and actual tool execution. Final text uses verified results;
+success means Windows accepted a request, never that the viewer rendered the file.
+The HTTP response shape stays unchanged, including null `pending_action`.
+
+Windows-native Python is required for real OS interactions. WSL/Linux return a
+structured unsupported-platform error for permitted reveal, with no shell fallback
+or path conversion. Windows handle pinning is preserved; asynchronous viewer access
+can still race after handles close. Explorer preview handlers and file associations
+remain platform risks. Live OpenAI and real Windows GUI behavior remain unverified.
+
+### Offline manual checks (no OpenAI credits)
+
+Install `requirements-dev.txt`, then from `backend/`:
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m scripts.check_file_interactions
+```
+
+The smoke check reuses the test-only scripted fake provider, creates a temporary
+allowed directory, safe text file and SQLite index, and calls `/agent/message` via
+FastAPI TestClient. It prints structured results and grounded text for reveal success
+(mocked OS) and confirmation-required opening. It sets reveal authorization only
+in the temporary app. No `.env`, real index, provider credentials or personal files
+are needed. Security/path failures are covered by `tests/test_file_interactions.py`.
+
+For an optional real Explorer check, run **native Windows PowerShell** from `backend/`:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_file_interactions --real-reveal
+```
+
+This reveals only the generated temporary `safe.txt`, waits for visual inspection,
+then cleans up. Opening remains mocked and must never be called: confirmation is
+not bypassed. Use `.\.venv\Scripts\python.exe` for the other commands on Windows.
+Features 3.5–3.8, conversation storage, full chat UI and write confirmation are absent.
