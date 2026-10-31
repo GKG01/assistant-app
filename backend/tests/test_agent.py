@@ -87,7 +87,7 @@ def test_api_success_no_dispatch_and_provider_cleanup(tmp_path, monkeypatch):
         response = client.post("/agent/message", json={"message": "Open my resume"})
         assert response.status_code == 200
         assert response.json() == {
-            "message": "No local operation was verified. Nova's current AI tools support only indexed file search, file information and arithmetic.",
+            "message": "No local operation was verified. Nova's current AI tools support indexed file search, file information, arithmetic and confirmation-required file interactions.",
             "result": None,
             "pending_action": None,
         }

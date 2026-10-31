@@ -3,8 +3,8 @@
 ## Trust boundary
 
 The frontend is not a security boundary. Every indexed, returned, inspected, or
-launched file passes deterministic backend policy. Feature 3.2 BRAIN may request
-only approved read-only tools. It has no shell, generic subprocess, arbitrary Python,
+launched file passes deterministic backend policy. BRAIN may request
+only the five explicitly approved tools, with separate interaction policy. It has no shell, generic subprocess, arbitrary Python,
 direct filesystem or database access. The provider receives schemas, never executors.
 This is an application boundary, not an OS sandbox against a compromised account.
 
@@ -55,7 +55,7 @@ after the existence check fails.
 | Risk | Behavior |
 | --- | --- |
 | READ | Registered calculate/search/info may execute after input validation |
-| INTERACTIVE | Open/reveal require direct user initiation; otherwise pending |
+| INTERACTIVE | Direct user initiation, or explicit AI reveal policy; AI opening always pending |
 | WRITE | Pending only; no execution/confirmation API |
 | DESTRUCTIVE | Denied |
 
@@ -133,12 +133,11 @@ function-call items may request execution. Missing/invalid/duplicate call IDs,
 incomplete responses and unsupported provider tool types fail closed.
 
 The agent adapter uses an explicit allowlist: `calculate`, `search_files`,
-`get_file_info`. It checks the exact registered implementation and READ classification,
-validates strict Pydantic JSON schemas with unknown fields forbidden, then dispatches
-through the existing PermissionManager with `read_only=True`. The guard independently
-rejects every non-READ risk before execution. No module scanning, dynamic imports,
-attribute resolution, user-supplied risk or confirmation flags are used. Registered
-open/reveal and all WRITE/DESTRUCTIVE tools remain unavailable to the agent.
+`get_file_info`, `open_file`, `show_in_folder`. It checks exact registered implementations
+and expected READ or INTERACTIVE classifications, validates strict Pydantic JSON
+schemas with unknown fields forbidden, then dispatches through PermissionManager.
+READ tools retain `read_only=True`; interactions use the explicit policy below. No module scanning, dynamic imports,
+attribute resolution, user-supplied risk or confirmation flags are used. All WRITE/DESTRUCTIVE tools remain unavailable to the agent.
 
 Search uses the existing SQLite repository and current PathPolicy; directory filters
 cannot widen allowed roots. Info accepts a bounded indexed ID, never an arbitrary
@@ -199,7 +198,7 @@ Keep the backend bound to loopback. Broader usage controls belong to later harde
 - Linux tests cover native-independent policy and mock Windows launches; they do
   not certify Windows shell associations, Explorer selection, or real junction races.
 
-Future reasoning must preserve the existing READ tool boundary and continue treating
+Future reasoning must preserve the existing explicit tool boundary and continue treating
 filenames and tool results as untrusted data. Durable WRITE confirmations and distribution
 hardening remain separate tasks; the current session credential is not a user
 login or a full OS security boundary.
@@ -227,7 +226,43 @@ produce false positives or miss paraphrases. Tool-assisted file prose is deliber
 conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
-READ-tool allowlist, desktop authorization and filesystem policy remain authoritative.
-No new tools, frontend, memory or Features 3.4–3.8 are introduced.
+tool allowlist, desktop authorization and filesystem policy remain authoritative.
+Feature 3.4 extends this boundary as documented below. No frontend, memory or
+Features 3.5–3.8 are introduced.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
+
+## Feature 3.4 OS interaction authorization
+
+The model supplies only a strict bounded positive indexed file ID. Paths are resolved
+from SQLite but never trusted solely because they are stored there. Shared preflight
+and execution enforce canonical allowed-directory paths, no links/reparse points,
+existence and regular-file type. Pending requests also validate their targets.
+Unknown fields reject command lines, executable selection, working directories,
+environment overrides, confirmation flags and arbitrary paths.
+
+INTERACTIVE remains distinct from READ. AI opening always requires confirmation;
+there is no confirm/resume endpoint, and model/user prose saying “confirmed” does
+not authorize execution. Existing direct buttons remain explicit separate actions.
+AI reveal defaults pending; `NOVA_ALLOW_AGENT_REVEAL=true` explicitly authorizes
+only reveal for authenticated desktop requests. It cannot authorize open, WRITE
+or DESTRUCTIVE operations. Changing this backend setting requires restart.
+
+The existing Phase 2 document/media extension allowlist is reused, case-insensitively.
+Executables, scripts, shortcuts and unknown extensions fail with
+`UNSUPPORTED_FILE_TYPE` before any launch. Reveal may select these files but never
+opens them. Even allowed types and Explorer previews can invoke vulnerable handlers.
+Filename instructions and shell metacharacters remain path data, never commands.
+The native launcher uses fixed Windows APIs with no shell interpolation. No model
+can add tools or change permissions through metadata.
+
+Within a search-to-interaction request, the latest search must identify exactly one
+returned file with the requested ID. Ambiguous, failed, empty or mismatched searches
+cannot cause an interaction. Final responses report pending/failure or OS acceptance,
+never successful rendering. Permission/argument/execution states are request-local;
+this is not the persistent audit system planned for Feature 3.8.
+
+Immediate path revalidation and Windows pinned handles reduce replacement races but
+do not bind an asynchronous viewer after dispatch. WSL/Linux have no launch fallback.
+Offline tests mock native launch operations and use temporary files/SQLite and fake
+providers; they do not certify real Explorer behavior, file associations or live OpenAI.

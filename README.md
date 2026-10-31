@@ -1,8 +1,8 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. Features 3.1–3.2 add
-AI responses and bounded, read-only structured tool calling through OpenAI. The backend still starts without a provider
+Phase 2 provides deterministic local file indexing and search. Features 3.1–3.4 add
+AI responses, bounded structured tool calling, grounding, and guarded file interactions. The backend still starts without a provider
 key; deterministic file features remain available. Voice remains a stub.
 
 ## Architecture and stack
@@ -46,7 +46,7 @@ See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md).
 - Guarded calculator and file tools, with automated tests using temporary files.
 
 POST /agent/message returns text from the configured LLM, optionally using approved
-read-only tools: calculate, search_files, and get_file_info. The voice route returns 501; Send and Mic stay disabled until later UI
+tools: calculate, search_files, get_file_info, open_file, and show_in_folder. The voice route returns 501; Send and Mic stay disabled until later UI
 integration. No conversation memory, content extraction, embeddings, background
 watchers, or file move/rename/delete operations exist.
 
@@ -142,6 +142,7 @@ backend after editing it.
 | OPENAI_TIMEOUT_SECONDS | 30 | Deadline per provider call; greater than 0, at most 120 |
 | OPENAI_MAX_OUTPUT_TOKENS | 1024 | Output cap including reasoning; 16–16384 |
 | NOVA_ALLOWED_DIRECTORIES | [] | JSON array of explicit absolute native paths |
+| NOVA_ALLOW_AGENT_REVEAL | false | Explicitly allow AI Explorer reveal for authenticated desktop requests; never authorizes AI opening |
 
 Example (replace with your real folders):
 
@@ -222,7 +223,7 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 
 ## Feature 3.2: read-only AI tool calling
 
-Features 3.1 and 3.2 are implemented. Each `/agent/message` request is independent;
+Features 3.1–3.4 are implemented. Each `/agent/message` request is independent;
 there is no persistent conversation, chat UI integration, or write confirmation.
 The existing response shape remains `message`, `result: null`, `pending_action: null`.
 
@@ -237,6 +238,8 @@ is never parsed as a command. Only these tools are exposed:
 | `calculate` | Required `expression`: 1–500 characters; numeric literals, `+ - * /`, unary signs, parentheses, decimals |
 | `search_files` | Optional `query` (filename substring), `extension`, `directory`, `modified_after`, `modified_before`, `min_size`, `max_size`, `sort`, `limit`, `offset` |
 | `get_file_info` | Required `file_id`: integer 1–9223372036854775807 |
+| `open_file` | Same strict `file_id`; confirmation required, no AI launch |
+| `show_in_folder` | Same strict `file_id`; explicit backend policy or confirmation required |
 
 Search reuses the SQLite metadata index; no scan or content read occurs. `query`
 maps to the existing file API's `q`. Sort values are `name_asc`, `name_desc`,
@@ -247,9 +250,10 @@ inclusive integers from 0 to 2^63−1. Query/extension/directory limits are 500/
 characters. Unknown fields, coercible wrong types, and invalid ranges are rejected.
 The direct file API retains its existing 50 default / 200 maximum page size.
 
-Every execution uses PermissionManager with a READ-only constraint. Tool names,
+Every execution uses PermissionManager. READ tools retain their READ-only constraint;
+open/reveal retain INTERACTIVE risk and the policy described below. Tool names,
 implementation types and risk classifications must match the explicit allowlist.
-Open/reveal remain available only through their existing direct UI/API actions.
+Existing direct UI/API actions retain their explicit user authorization.
 No shell, arbitrary Python, unrestricted SQL or file-content capability is exposed.
 The calculator uses a restricted arithmetic AST, with at most 100 nodes and finite
 intermediate magnitudes at most 1e100; no functions, variables, powers or attributes.
@@ -381,8 +385,8 @@ elimination. Windows-native validation: from `backend`, run
 `python -m pytest -q tests/permissions/test_windows_handles.py`.
 
 Tools are explicitly registered. READ operations run through the guard.
-INTERACTIVE open/reveal needs trusted direct-user context; model-shaped calls stay
-pending. WRITE remains pending; DESTRUCTIVE remains denied. There is no generic
+INTERACTIVE opening needs trusted direct-user context. AI reveal requires the
+explicit backend setting; otherwise model requests remain confirmation-required. WRITE remains pending; DESTRUCTIVE remains denied. There is no generic
 shell, subprocess, code-evaluation, or direct model database capability.
 
 SQLite migrates Phase 1 to schema version 2, preserving existing IDs and actions.
@@ -397,7 +401,7 @@ see [Security](docs/SECURITY.md) for the implemented boundary and limits.
 
 ## Next step
 
-Feature 3.3 — Grounded Responses & Agent Safety. Features 3.3–3.8 are not implemented.
+Feature 3.5 — Conversation Context. Features 3.5–3.8 are not implemented.
 Native Windows Open/Show in Folder validation,
 voice, WRITE confirmation, and packaging remain separate work.
 
@@ -426,7 +430,73 @@ produce false positives or miss paraphrases. Tool-assisted file prose is deliber
 conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
-READ-tool allowlist, desktop authorization and filesystem policy remain authoritative.
-No new tools, frontend, memory or Features 3.4–3.8 are introduced.
+tool allowlist, desktop authorization and filesystem policy remain authoritative.
+Feature 3.4 extends this boundary as documented below. No frontend, memory or
+Features 3.5–3.8 are introduced.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
+
+## Feature 3.4: file interaction tools
+
+`open_file(file_id)` and `show_in_folder(file_id)` share Phase 2's tools,
+FileActionService, SQLite ID lookup, canonical path policy, and Windows launcher.
+Only positive strict integer IDs up to 2^63−1 are accepted. Extra fields, paths,
+commands, application arguments and model-supplied confirmation are rejected.
+Both tools require the existing managed desktop session and file request header.
+
+Opening always returns `CONFIRMATION_REQUIRED` for a valid supported file, without
+launching it. There is no confirmation/resume endpoint: use the existing desktop
+Open button as a separate direct action. Reveal also defaults to confirmation.
+Set `NOVA_ALLOW_AGENT_REVEAL=true` in backend configuration and restart to explicitly
+permit AI reveal. This never permits AI opening or writes. The existing document
+allowlist is reused case-insensitively: `.pdf .txt .csv .png .jpg .jpeg .gif .bmp
+.webp .docx .xlsx .pptx`. All other types (including scripts, executables and shortcuts)
+return `UNSUPPORTED_FILE_TYPE` for opening; they may be revealed under reveal policy.
+The Phase 2 allowlist is retained for compatibility, not a guarantee of content safety.
+
+Paths are revalidated even for pending requests. Missing records/files, replaced
+directories, outside paths and symlink/reparse escapes fail safely. A chained
+interaction requires the latest search in that request to return exactly one match
+and the requested ID; pagination does not make an ambiguous search unique. Narrow
+searches are allowed within the same request; no history survives the request.
+
+Structured results retain `success`, `status`, `data`, `error_code`, `error_message`.
+New statuses include `CONFIRMATION_REQUIRED`, `UNSUPPORTED_FILE_TYPE`, `OS_ERROR`,
+and `UNSUPPORTED_PLATFORM`. Validation/permission failures use existing statuses.
+Request-local execution records track argument validation, permission approval,
+confirmation required and actual tool execution. Final text uses verified results;
+success means Windows accepted a request, never that the viewer rendered the file.
+The HTTP response shape stays unchanged, including null `pending_action`.
+
+Windows-native Python is required for real OS interactions. WSL/Linux return a
+structured unsupported-platform error for permitted reveal, with no shell fallback
+or path conversion. Windows handle pinning is preserved; asynchronous viewer access
+can still race after handles close. Explorer preview handlers and file associations
+remain platform risks. Live OpenAI and real Windows GUI behavior remain unverified.
+
+### Offline manual checks (no OpenAI credits)
+
+Install `requirements-dev.txt`, then from `backend/`:
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m scripts.check_file_interactions
+```
+
+The smoke check reuses the test-only scripted fake provider, creates a temporary
+allowed directory, safe text file and SQLite index, and calls `/agent/message` via
+FastAPI TestClient. It prints structured results and grounded text for reveal success
+(mocked OS) and confirmation-required opening. It sets reveal authorization only
+in the temporary app. No `.env`, real index, provider credentials or personal files
+are needed. Security/path failures are covered by `tests/test_file_interactions.py`.
+
+For an optional real Explorer check, run **native Windows PowerShell** from `backend/`:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.check_file_interactions --real-reveal
+```
+
+This reveals only the generated temporary `safe.txt`, waits for visual inspection,
+then cleans up. Opening remains mocked and must never be called: confirmation is
+not bypassed. Use `.\.venv\Scripts\python.exe` for the other commands on Windows.
+Features 3.5–3.8, conversation storage, full chat UI and write confirmation are absent.

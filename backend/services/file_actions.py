@@ -6,7 +6,7 @@ from typing import Literal
 
 from database.repositories.actions import ActionRepository
 from permissions.windows_handles import pinned_file
-from services.file_models import FileActionResponse
+from services.file_models import FileActionResponse, IndexedFile
 from services.file_search import FileSearchService
 
 OPEN_EXTENSIONS = frozenset(
@@ -25,6 +25,10 @@ OPEN_EXTENSIONS = frozenset(
         ".pptx",
     }
 )
+
+
+class UnsupportedFileTypeError(PermissionError):
+    """A validated file has no approved default-app opening policy."""
 
 
 class WindowsFileLauncher:
@@ -98,20 +102,26 @@ class FileActionService:
         self.actions = actions
         self.launcher = launcher
 
-    def perform(
+    def validate_target(
         self, file_id: int, action: Literal["open_file", "show_in_folder"]
-    ) -> FileActionResponse:
+    ) -> IndexedFile:
         file = self.search.get_file_info(file_id)
         if (
             action == "open_file"
             and Path(file.path).suffix.casefold() not in OPEN_EXTENSIONS
         ):
-            raise PermissionError(
+            raise UnsupportedFileTypeError(
                 "Opening this file type is disabled. Use Show in Folder instead."
             )
+        return file
+
+    def perform(
+        self, file_id: int, action: Literal["open_file", "show_in_folder"]
+    ) -> FileActionResponse:
+        file = self.validate_target(file_id, action)
         # Record before invoking the OS; a failed audit write prevents the launch.
         self.actions.record(
-            user_command="Explicit file button",
+            user_command="Authorized file interaction",
             tool=action,
             arguments={"file_id": file_id},
             result=None,
@@ -119,6 +129,8 @@ class FileActionService:
         )
         try:
             path = self.search.policy.validate(Path(file.path), must_exist=True)
+            if not path.is_file():
+                raise FileNotFoundError("Indexed target is no longer a regular file.")
             guard = (
                 pinned_file(self.search.policy, path)
                 if os.name == "nt"
@@ -131,7 +143,7 @@ class FileActionService:
                     self.launcher.show_in_folder(pinned)
         except (OSError, NotImplementedError):
             self.actions.record(
-                user_command="Explicit file button",
+                user_command="Authorized file interaction",
                 tool=action,
                 arguments={"file_id": file_id},
                 result=None,

@@ -460,18 +460,23 @@ def test_iso_dates_and_schema_mapping(boundary):
         assert result.status == "denied"
 
 
-def test_real_registered_interactive_tools_are_hidden(file_client):
-    client, _ = file_client
+def test_real_registered_interactive_tools_require_confirmation(file_client):
+    client, root = file_client
+    (root / "test.txt").touch()
+    client.post("/files/index")
+    file_id = client.get("/files/search").json()["results"][0]["id"]
     executor = client.app.state.agent._tools
     assert {d.name for d in executor.definitions(file_access=True)} == {
         "calculate",
         "search_files",
         "get_file_info",
+        "open_file",
+        "show_in_folder",
     }
     for name in ("open_file", "show_in_folder"):
         assert (
-            execute(executor, name, '{"file_id":1}')["error_code"]
-            == "PERMISSION_DENIED"
+            execute(executor, name, json.dumps({"file_id": file_id}))["status"]
+            == "CONFIRMATION_REQUIRED"
         )
 
 

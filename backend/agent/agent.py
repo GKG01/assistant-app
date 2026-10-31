@@ -60,7 +60,10 @@ class Agent:
                 results = []
                 for call in reply.tool_calls:
                     record = await run_in_threadpool(
-                        self._tools.execute_record, call, file_access=file_access
+                        self._tools.execute_record,
+                        call,
+                        file_access=file_access,
+                        history=records,
                     )
                     records.append(record)
                     output = encode(record.result)
