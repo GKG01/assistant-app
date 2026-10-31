@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     openai_max_output_tokens: int = Field(default=1024, ge=16, le=16384)
     # JSON array of absolute paths. Empty means no filesystem access.
     nova_allowed_directories: list[Path] = []
+    nova_allow_agent_reveal: bool = False
 
     @property
     def database_path(self) -> Path:

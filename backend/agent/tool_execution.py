@@ -7,14 +7,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from agent.schemas import ToolCall, ToolResult, ExecutionRecord
+from agent.schemas import ToolCall, ToolResult, ExecutionRecord, PendingAction
 from agent.tool_registry import ToolRegistry, UnknownToolError
 from permissions.manager import PermissionManager
 from permissions.policies import RiskLevel
+from services.file_actions import UnsupportedFileTypeError
 from services.file_models import FileIdInput, SearchFilters
 from services.llm.base import LLMToolCall, LLMToolDefinition
 from tools.calculator import CalculateTool
-from tools.files import GetFileInfoTool, SearchFilesTool
+from tools.files import GetFileInfoTool, SearchFilesTool, OpenFileTool, ShowInFolderTool
 
 MAX_ARGUMENT_BYTES = 8192
 MAX_RESULT_BYTES = 16384
@@ -47,10 +48,19 @@ class AgentCalculateInput(BaseModel):
 
 # Exact implementation types prevent accidental exposure of a replacement tool
 # under an approved name. Schemas narrow, but never broaden, registered inputs.
+INTERACTION_TOOLS = frozenset({"open_file", "show_in_folder"})
+
+
+def expected_risk(name: str) -> RiskLevel:
+    return RiskLevel.INTERACTIVE if name in INTERACTION_TOOLS else RiskLevel.READ
+
+
 APPROVED = {
     "search_files": (SearchFilesTool, AgentSearchInput),
     "get_file_info": (GetFileInfoTool, AgentFileInput),
     "calculate": (CalculateTool, AgentCalculateInput),
+    "open_file": (OpenFileTool, AgentFileInput),
+    "show_in_folder": (ShowInFolderTool, AgentFileInput),
 }
 
 
@@ -111,7 +121,7 @@ class AgentToolExecutor:
                 tool = self.registry.get(name)
             except UnknownToolError:
                 continue
-            if type(tool) is implementation and tool.risk == RiskLevel.READ:
+            if type(tool) is implementation and tool.risk == expected_risk(name):
                 definitions.append(
                     LLMToolDefinition(
                         name=name,
@@ -122,11 +132,15 @@ class AgentToolExecutor:
         return definitions
 
     def execute_record(
-        self, call: LLMToolCall, *, file_access: bool
+        self,
+        call: LLMToolCall,
+        *,
+        file_access: bool,
+        history: list[ExecutionRecord] | None = None,
     ) -> ExecutionRecord:
         record = ExecutionRecord(tool_call_id=call.id, tool_name=call.name)
         record.result = json.loads(
-            self.execute(call, file_access=file_access, record=record)
+            self.execute(call, file_access=file_access, record=record, history=history)
         )
         record.state = (
             ("completed" if record.result["success"] else "failed")
@@ -144,18 +158,42 @@ class AgentToolExecutor:
         *,
         file_access: bool,
         record: ExecutionRecord | None = None,
+        history: list[ExecutionRecord] | None = None,
     ) -> str:
         try:
             return bounded_result(
-                self._execute(call, file_access=file_access, record=record)
+                self._execute(
+                    call, file_access=file_access, record=record, history=history
+                )
             )
         except FileNotFoundError:
             return encode(
                 error("NOT_FOUND", "Indexed file no longer exists or was not found.")
             )
+        except UnsupportedFileTypeError:
+            return encode(
+                error("UNSUPPORTED_FILE_TYPE", "Opening this file type is disabled.")
+            )
+        except NotImplementedError:
+            return encode(
+                error("UNSUPPORTED_PLATFORM", "This interaction requires Windows.")
+            )
         except PermissionError:
             return encode(
                 error("PERMISSION_DENIED", "The requested path is not allowed.")
+            )
+        except OSError:
+            return encode(
+                error(
+                    "OS_ERROR", "The operating system could not complete the request."
+                )
+            )
+        except ValueError:
+            return encode(
+                error(
+                    "INVALID_ARGUMENTS",
+                    "The indexed path or tool arguments are invalid.",
+                )
             )
         except Exception:
             return encode(
@@ -168,6 +206,7 @@ class AgentToolExecutor:
         *,
         file_access: bool,
         record: ExecutionRecord | None = None,
+        history: list[ExecutionRecord] | None = None,
     ) -> dict[str, Any]:
         try:
             tool = self.registry.get(call.name)
@@ -177,7 +216,7 @@ class AgentToolExecutor:
         if (
             approved is None
             or type(tool) is not approved[0]
-            or tool.risk != RiskLevel.READ
+            or tool.risk != expected_risk(call.name)
             or (call.name != "calculate" and not file_access)
         ):
             return error(
@@ -196,19 +235,52 @@ class AgentToolExecutor:
 
         def started() -> None:
             if record is not None:
+                record.permission_approved = True
                 record.executed = True
                 record.state = "started"
 
+        if record is not None:
+            record.arguments_validated = True
+        if call.name in INTERACTION_TOOLS:
+            searches = [r for r in (history or []) if r.tool_name == "search_files"]
+            if searches:
+                latest = searches[-1].result
+                data = latest.get("data") or {}
+                matches = data.get("results", [])
+                if not (
+                    latest["success"]
+                    and data.get("total") == 1
+                    and len(matches) == 1
+                    and matches[0].get("id") == arguments.file_id
+                ):
+                    return error(
+                        "INVALID_ARGUMENTS",
+                        "Please narrow the search to one matching file before requesting an interaction.",
+                    )
         result = self.permissions.dispatch(
             ToolCall(tool=call.name, arguments=arguments.model_dump(mode="json")),
-            read_only=True,
+            read_only=call.name not in INTERACTION_TOOLS,
+            **({"agent_requested": True} if call.name in INTERACTION_TOOLS else {}),
             **({"on_start": started} if record is not None else {}),
         )
+        if isinstance(result, PendingAction) and call.name in INTERACTION_TOOLS:
+            # Validation is read-only. Never turn provider prose into user_initiated.
+            tool.service.validate_target(arguments.file_id, call.name)
+            if record is not None:
+                record.confirmation_required = True
+            return error(
+                "CONFIRMATION_REQUIRED",
+                "This interaction requires confirmation. Nothing was opened or revealed. Use the file's Open or Show in Folder button in the desktop app.",
+            )
         if not isinstance(result, ToolResult) or result.status == "denied":
-            return error("PERMISSION_DENIED", "Only approved READ tools may execute.")
+            return error(
+                "PERMISSION_DENIED", "Tool execution was denied by permission policy."
+            )
         if result.status != "completed":
             return error(
-                "EXECUTION_FAILURE",
+                "INVALID_ARGUMENTS"
+                if call.name in INTERACTION_TOOLS
+                else "EXECUTION_FAILURE",
                 "The tool could not complete the request (check arithmetic and filters).",
             )
         data = result.data

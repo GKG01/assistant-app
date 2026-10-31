@@ -53,6 +53,9 @@ class ExecutionRecord(Contract):
     tool_call_id: str
     tool_name: str
     executed: bool = False
+    arguments_validated: bool = False
+    permission_approved: bool = False
+    confirmation_required: bool = False
     state: Literal["requested", "rejected", "started", "completed", "failed"] = (
         "requested"
     )

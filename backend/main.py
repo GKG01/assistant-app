@@ -70,7 +70,9 @@ def create_app(
         ):
             registry.register(tool)
         app.state.database = database
-        app.state.permissions = PermissionManager(registry)
+        app.state.permissions = PermissionManager(
+            registry, allow_agent_reveal=configuration.nova_allow_agent_reveal
+        )
         provider = (
             llm_provider if llm_provider is not None else OpenAIProvider(configuration)
         )

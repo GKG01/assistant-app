@@ -1,6 +1,6 @@
 # Architecture
 
-Feature 3.2 connects BRAIN to an explicit read-only subset of HANDS.
+Features 3.2–3.4 connect BRAIN to explicit read-only and guarded interactive HANDS.
 GUARD controls every execution and retains the existing path and session boundaries.
 
 ```mermaid
@@ -41,7 +41,7 @@ flowchart TD
     OpenAI --> Call[Provider-neutral structured tool calls]
     Call --> Executor[AgentToolExecutor: allowlist and strict schemas]
     Executor --> Registry[Existing ToolRegistry]
-    Registry --> Guard[PermissionManager: READ only]
+    Registry --> Guard[PermissionManager: READ / INTERACTIVE policy]
     Guard --> Tool[Deterministic search / info / calculator]
     Tool --> Result[Bounded structured JSON result]
     Result --> Provider
@@ -64,7 +64,7 @@ optional filters/defaults; strict Pydantic JSON validation is enforced locally.
 See the [official function-calling protocol](https://developers.openai.com/api/docs/guides/function-calling).
 
 `AgentToolExecutor` is an adapter over the existing registry and permission manager,
-not a second registry or search engine. It selects three fixed names and exact
+not a second registry or search engine. It selects five fixed names and exact
 implementation types. Agent schemas narrow existing inputs: search maps `query` to
 `q` and caps pages at 50; file IDs are bounded positive integers; arithmetic exposes
 only expressions. The direct file API and legacy calculator inputs are preserved.
@@ -105,7 +105,8 @@ are calculate, search_files, get_file_info, open_file, and show_in_folder.
 
 READ tools execute after schema validation. INTERACTIVE tools return a pending
 proposal unless dispatch receives trusted `user_initiated=True`. Only fixed
-open/reveal HTTP handlers set this flag; it is not a ToolCall argument and cannot
+open/reveal HTTP handlers set this flag; AI reveal may instead use an explicit
+backend policy, as described below; it is not a ToolCall argument and cannot
 bypass WRITE policy. The user's click is the explicit action authorization in this
 phase. WRITE remains pending and DESTRUCTIVE denied. No general confirmation
 endpoint exists.
@@ -212,7 +213,42 @@ produce false positives or miss paraphrases. Tool-assisted file prose is deliber
 conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
-READ-tool allowlist, desktop authorization and filesystem policy remain authoritative.
-No new tools, frontend, memory or Features 3.4–3.8 are introduced.
+tool allowlist, desktop authorization and filesystem policy remain authoritative.
+Feature 3.4 extends this boundary as documented below. No frontend, memory or
+Features 3.5–3.8 are introduced.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
+
+## Feature 3.4 interaction pipeline
+
+```text
+User request → Agent → LLM structured call → existing ToolRegistry
+→ strict indexed-ID arguments → request-local search selection check
+→ PermissionManager (INTERACTIVE)
+→ FileActionService / indexed record → canonical path, existence and regular-file check
+→ existing extension policy (open only)
+→ confirmation-required result OR explicitly authorized reveal
+→ existing Windows launcher → verified result → grounded response
+```
+
+The permission manager chooses pending versus execution before calling a tool.
+Pending interaction requests still run the shared read-only `validate_target`
+preflight so invalid records/paths/types are reported instead of inviting confirmation.
+Authorized reveal executes through the same tool/service as the direct route, including
+immediate path revalidation, Windows handle pinning, and existing action audit writes.
+No second launcher, registry, provider or endpoint is introduced.
+
+`NOVA_ALLOW_AGENT_REVEAL` defaults false and is supplied to PermissionManager at
+composition. Only trusted executor code supplies `agent_requested`; only direct
+file routes supply `user_initiated`. Neither is in the model schema. AI opening
+never receives direct-user authorization. PendingAction remains an internal existing
+proposal, translated to `CONFIRMATION_REQUIRED`; no persistence or confirmation API
+is added. ExecutionRecord adds argument-validation, permission-approval and
+confirmation-required flags. `executed` means tool execution started, not OS success.
+A completed interaction result means the OS request returned successfully; failed
+and pending results cannot produce success prose. Errors remain sanitized.
+
+The exact five-tool allowlist and desktop credential gate are retained. The latest
+search must have total=1, one returned row, and an ID matching the interaction.
+This conservative backend selection check may ask for a narrower search even where
+a human could infer a preference. It uses only the current request's records.

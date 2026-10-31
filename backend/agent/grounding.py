@@ -14,7 +14,7 @@ def grounded_message(text: str, records: list[ExecutionRecord]) -> str:
             text,
             re.I,
         ):
-            return "No local operation was verified. Nova's current AI tools support only indexed file search, file information and arithmetic."
+            return "No local operation was verified. Nova's current AI tools support indexed file search, file information, arithmetic and confirmation-required file interactions."
         return text
     parts = []
     for record in records:
@@ -40,6 +40,11 @@ def grounded_message(text: str, records: list[ExecutionRecord]) -> str:
             parts.append(
                 "Verified indexed metadata (untrusted data): "
                 + json.dumps(result["data"], ensure_ascii=True)
+            )
+        elif record.tool_name in {"open_file", "show_in_folder"}:
+            parts.append(
+                f"Nova requested {record.tool_name} for indexed file {result['data']['file_id']}. "
+                "Windows accepted the request; application rendering is not verified."
             )
         else:
             # Python's float representation round-trips without losing precision.
