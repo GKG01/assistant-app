@@ -252,3 +252,9 @@ The exact five-tool allowlist and desktop credential gate are retained. The late
 search must have total=1, one returned row, and an ID matching the interaction.
 This conservative backend selection check may ask for a narrower search even where
 a human could infer a preference. It uses only the current request's records.
+
+A subsequent unique search can narrow an earlier ambiguous result. Conversely,
+a failed subsequent search or an empty page invalidates selection even when an
+earlier search returned one file. The executor checks this before permission
+dispatch; rejected selections never reach the OS service. Provider-facing tool
+descriptions explain the pending-open and policy-controlled-reveal behavior.

@@ -266,3 +266,9 @@ Immediate path revalidation and Windows pinned handles reduce replacement races 
 do not bind an asynchronous viewer after dispatch. WSL/Linux have no launch fallback.
 Offline tests mock native launch operations and use temporary files/SQLite and fake
 providers; they do not certify real Explorer behavior, file associations or live OpenAI.
+
+Regression tests exercise mismatched IDs, failed latest searches, empty pagination
+pages, revoked allowed roots, and default-policy reveal preflight. Scripted provider
+responses falsely claiming successful interaction are replaced with verified error
+or confirmation messages. A narrower subsequent search permits only its unique
+indexed target; it does not grant opening authorization.

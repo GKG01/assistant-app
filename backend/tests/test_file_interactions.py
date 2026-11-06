@@ -355,3 +355,130 @@ def test_no_request_history_persists(interactions, file_stack):
         asyncio.run(agent.respond(AgentRequest(message=message), file_access=True))
     launcher.show_in_folder.assert_called_once()
     assert provider.requests[2][1]["turns"] == []
+
+
+@pytest.mark.parametrize("name", ["open_file", "show_in_folder"])
+@pytest.mark.parametrize("selection", ["mismatch", "empty_page", "failed_latest"])
+def test_search_selection_cannot_be_bypassed(interactions, file_stack, name, selection):
+    executor, launcher = interactions
+    file_id, _ = indexed(file_stack, "resume.pdf")
+    other_id, _ = indexed(file_stack, "other.pdf")
+    searches = [reply(call("search_files", '{"query":"resume"}'))]
+    target_id = other_id if selection == "mismatch" else file_id
+    if selection != "mismatch":
+        arguments = (
+            '{"query":"resume","offset":1}'
+            if selection == "empty_page"
+            else '{"query":"resume","limit":0}'
+        )
+        searches.append(reply(call("search_files", arguments, id="latest")))
+    provider = ScriptedProvider(
+        searches
+        + [
+            reply(call(name, json.dumps({"file_id": target_id}), id="interact")),
+            LLMReply(text="Successfully opened and displayed the file."),
+        ]
+    )
+    response = asyncio.run(
+        Agent(provider, executor).respond(
+            AgentRequest(message="Find resume and interact with it"), file_access=True
+        )
+    )
+    result = json.loads(provider.requests[-1][1]["turns"][-1].results[0].output)
+    assert result["status"] == "INVALID_ARGUMENTS"
+    assert "narrow the search" in response.message
+    assert "Successfully opened" not in response.message
+    assert not launcher.mock_calls
+
+
+@pytest.mark.parametrize("name", ["open_file", "show_in_folder"])
+def test_narrowed_search_allows_only_unique_target(interactions, file_stack, name):
+    executor, launcher = interactions
+    file_id, path = indexed(file_stack, "resume-current.pdf")
+    indexed(file_stack, "resume-old.pdf")
+    provider = ScriptedProvider(
+        [
+            reply(call("search_files", '{"query":"resume"}')),
+            reply(call("search_files", '{"query":"resume-current"}', id="narrow")),
+            reply(call(name, json.dumps({"file_id": file_id}), id="interact")),
+            LLMReply(text="Successfully rendered the document."),
+        ]
+    )
+    response = asyncio.run(
+        Agent(provider, executor).respond(
+            AgentRequest(message="Find current resume and interact"), file_access=True
+        )
+    )
+    result = json.loads(provider.requests[-1][1]["turns"][-1].results[0].output)
+    if name == "show_in_folder":
+        assert result["status"] == "SUCCESS"
+        launcher.show_in_folder.assert_called_once_with(path)
+        assert "Windows accepted" in response.message
+    else:
+        assert result["status"] == "CONFIRMATION_REQUIRED"
+        assert "requires confirmation" in response.message
+        assert not launcher.mock_calls
+    assert "Successfully rendered" not in response.message
+    launcher.open_file.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_default_reveal_policy_validates_without_launch(
+    interactions, file_stack, missing
+):
+    executor, launcher = interactions
+    executor.permissions = PermissionManager(executor.registry)
+    file_id, path = indexed(file_stack)
+    if missing:
+        path.unlink()
+    record = run(executor, "show_in_folder", file_id)
+    assert record.result["status"] == (
+        "NOT_FOUND" if missing else "CONFIRMATION_REQUIRED"
+    )
+    assert not record.executed
+    assert record.confirmation_required is not missing
+    assert not launcher.mock_calls
+
+
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("missing", "NOT_FOUND"),
+        ("revoked", "PERMISSION_DENIED"),
+        ("os_failure", "OS_ERROR"),
+        ("unsupported", "UNSUPPORTED_PLATFORM"),
+    ],
+)
+def test_agent_failure_response_is_grounded(interactions, file_stack, mode, expected):
+    executor, launcher = interactions
+    file_id, path = indexed(file_stack)
+    if mode == "missing":
+        path.unlink()
+    elif mode == "revoked":
+        file_stack[-1].policy.roots = ()
+    else:
+        launcher.show_in_folder.side_effect = (
+            OSError("private launch details")
+            if mode == "os_failure"
+            else NotImplementedError("private platform details")
+        )
+    provider = ScriptedProvider(
+        [
+            reply(call("show_in_folder", json.dumps({"file_id": file_id}))),
+            LLMReply(text="Successfully revealed and rendered the file."),
+        ]
+    )
+    response = asyncio.run(
+        Agent(provider, executor).respond(
+            AgentRequest(message="Reveal the indexed file"), file_access=True
+        )
+    )
+    result = json.loads(provider.requests[-1][1]["turns"][0].results[0].output)
+    assert result["status"] == expected
+    assert response.message == result["error_message"]
+    assert "private" not in response.message
+    launcher.open_file.assert_not_called()
+    if mode in {"missing", "revoked"}:
+        launcher.show_in_folder.assert_not_called()
+    else:
+        launcher.show_in_folder.assert_called_once_with(path)
