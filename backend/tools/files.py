@@ -37,7 +37,10 @@ class GetFileInfoTool(Tool[FileIdInput]):
 
 class OpenFileTool(Tool[FileIdInput]):
     name = "open_file"
-    description = "Open a supported indexed document via an explicit user action."
+    description = (
+        "Request opening a supported indexed document by ID. Agent requests require "
+        "confirmation and do not launch; use the desktop Open button."
+    )
     risk = RiskLevel.INTERACTIVE
     input_schema = FileIdInput
 
@@ -52,7 +55,10 @@ class OpenFileTool(Tool[FileIdInput]):
 
 class ShowInFolderTool(OpenFileTool):
     name = "show_in_folder"
-    description = "Reveal an indexed file in Explorer via an explicit user action."
+    description = (
+        "Request selecting an indexed file in Windows Explorer by ID. Agent requests "
+        "require confirmation unless backend reveal policy explicitly allows them."
+    )
 
     def execute(self, arguments: FileIdInput) -> dict[str, Any]:
         return self.service.perform(arguments.file_id, "show_in_folder").model_dump(

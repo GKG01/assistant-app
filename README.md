@@ -500,3 +500,10 @@ This reveals only the generated temporary `safe.txt`, waits for visual inspectio
 then cleans up. Opening remains mocked and must never be called: confirmation is
 not bypassed. Use `.\.venv\Scripts\python.exe` for the other commands on Windows.
 Features 3.5–3.8, conversation storage, full chat UI and write confirmation are absent.
+
+Feature 3.4 regression checks also cover narrowing an ambiguous search within one
+request, rejecting an ID different from the unique search result, and rejecting
+interaction after a failed search or an empty pagination page. The latest search
+controls selection; an earlier successful search cannot override it. To run just
+these offline interaction tests: `cd backend && .venv/bin/python -m pytest -q tests/test_file_interactions.py`.
+These tests verify grounded failures as well as successful mocked reveal requests.
