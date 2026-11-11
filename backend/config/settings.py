@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # JSON array of absolute paths. Empty means no filesystem access.
     nova_allowed_directories: list[Path] = []
     nova_allow_agent_reveal: bool = False
+    nova_conversation_timeout_seconds: int = Field(default=1800, ge=1, le=86400)
 
     @property
     def database_path(self) -> Path:

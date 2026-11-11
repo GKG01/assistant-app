@@ -145,3 +145,65 @@ def test_malformed_argument_json_preserved_for_backend_validation():
         )
     )
     assert result.tool_calls[0].arguments == "{bad"
+
+
+def test_context_is_native_roles_with_complete_current_tool_pairs():
+    from services.llm.base import ConversationTurn
+
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={**response_body(), "output": [function_item()]}
+            if len(requests) == 1
+            else response_body("3"),
+        )
+
+    async def check():
+        provider = OpenAIProvider(Settings(_env_file=None, openai_api_key="test-key"))
+        provider._client = AsyncOpenAI(
+            api_key="test-key",
+            max_retries=0,
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+        )
+        history = (ConversationTurn("Earlier question", "Grounded earlier answer"),)
+        try:
+            first = await provider.generate_with_context(
+                "Calculate",
+                history=history,
+                system_prompt="trusted",
+                tools=[],
+                turns=[],
+            )
+            await provider.generate_with_context(
+                "Calculate",
+                history=history,
+                system_prompt="trusted",
+                tools=[],
+                turns=[
+                    LLMToolTurn(
+                        reply=first,
+                        results=[
+                            LLMToolResultMessage(
+                                call_id="call_1",
+                                output='{"success":true,"data":{"value":3}}',
+                            )
+                        ],
+                    )
+                ],
+            )
+        finally:
+            await provider.close()
+
+    asyncio.run(check())
+    assert requests[0]["instructions"] == "trusted"
+    assert requests[0]["input"] == [
+        {"role": "user", "content": "Earlier question"},
+        {"role": "assistant", "content": "Grounded earlier answer"},
+        {"role": "user", "content": "Calculate"},
+    ]
+    assert requests[1]["input"][3]["type"] == "function_call"
+    assert requests[1]["input"][4]["type"] == "function_call_output"
+    assert requests[1]["input"][3]["call_id"] == requests[1]["input"][4]["call_id"]

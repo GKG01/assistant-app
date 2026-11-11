@@ -20,6 +20,7 @@ from permissions.manager import PermissionManager
 from permissions.paths import PathPolicy
 from permissions.session import DesktopSession, require_desktop_session
 from services.file_search import FileSearchService
+from services.conversations import ConversationStore
 from services.file_indexing import FileIndexingService, IndexBusyError
 from services.file_actions import FileActionService, WindowsFileLauncher
 from tools.calculator import CalculateTool
@@ -39,6 +40,10 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.conversations = ConversationStore(
+            timeout=configuration.nova_conversation_timeout_seconds
+        )
+        app.state.standalone_conversation_owner = object()
         database = Database(configuration.database_path)
         database.initialize()
         policy = PathPolicy(configuration.nova_allowed_directories)
@@ -101,6 +106,7 @@ def create_app(
         allow_origins=sorted(files.TRUSTED_ORIGINS),
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type", "X-Nova-Request", "Authorization"],
+        expose_headers=["X-Nova-Conversation-ID"],
     )
     for error, status, message in (
         (

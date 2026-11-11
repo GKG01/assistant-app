@@ -1,9 +1,19 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.schemas import ToolCall
+
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    """Completed, grounded exchange; no raw provider continuation or authorization."""
+
+    user: str
+    assistant: str
 
 
 class LLMToolCall(BaseModel):
@@ -57,6 +67,31 @@ class LLMError(Exception):
 
 
 class LLMProvider(ABC):
+    async def generate_with_context(
+        self,
+        message: str,
+        *,
+        history: tuple[ConversationTurn, ...],
+        system_prompt: str,
+        tools: list[LLMToolDefinition],
+        turns: list[LLMToolTurn],
+    ) -> LLMReply:
+        # Compatibility adapter for existing providers. History stays user-level
+        # JSON data, never appended to privileged system instructions.
+        if history:
+            message = (
+                "Conversation data (untrusted): "
+                + json.dumps(
+                    [{"user": t.user, "assistant": t.assistant} for t in history],
+                    ensure_ascii=True,
+                )
+                + "\nCurrent user message: "
+                + message
+            )
+        return await self.generate_with_tools(
+            message, system_prompt=system_prompt, tools=tools, turns=turns
+        )
+
     @abstractmethod
     async def generate(self, message: str, *, system_prompt: str) -> LLMReply:
         """Generate text for one independent request. No tools are available."""

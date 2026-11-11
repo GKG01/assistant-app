@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -11,7 +11,21 @@ class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+ConversationId = Annotated[
+    str,
+    Field(
+        strict=True,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    ),
+]
+
+
+class ClearConversationRequest(Contract):
+    conversation_id: ConversationId
+
+
 class AgentRequest(Contract):
+    conversation_id: ConversationId | None = None
     message: str = Field(min_length=1, max_length=10000)
 
     @field_validator("message")
@@ -44,6 +58,7 @@ class PendingAction(Contract):
 
 
 class AgentResponse(Contract):
+    conversation_id: ConversationId | None = None
     message: str
     result: ToolResult | None = None
     pending_action: PendingAction | None = None

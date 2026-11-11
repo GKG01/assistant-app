@@ -1,7 +1,7 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. Features 3.1–3.4 add
+Phase 2 provides deterministic local file indexing and search. Features 3.1–3.5 add
 AI responses, bounded structured tool calling, grounding, and guarded file interactions. The backend still starts without a provider
 key; deterministic file features remain available. Voice remains a stub.
 
@@ -47,7 +47,7 @@ See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md).
 
 POST /agent/message returns text from the configured LLM, optionally using approved
 tools: calculate, search_files, get_file_info, open_file, and show_in_folder. The voice route returns 501; Send and Mic stay disabled until later UI
-integration. No conversation memory, content extraction, embeddings, background
+integration. No permanent memory, content extraction, embeddings, background
 watchers, or file move/rename/delete operations exist.
 
 ## Prerequisites
@@ -223,9 +223,9 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 
 ## Feature 3.2: read-only AI tool calling
 
-Features 3.1–3.4 are implemented. Each `/agent/message` request is independent;
-there is no persistent conversation, chat UI integration, or write confirmation.
-The existing response shape remains `message`, `result: null`, `pending_action: null`.
+Features 3.1–3.5 are implemented. Requests may continue bounded in-memory conversations (Feature 3.5 below);
+there is no permanent conversation storage, chat UI integration, or write confirmation.
+The response retains `message`, `result: null`, `pending_action: null` and adds `conversation_id`.
 
 The agent sends approved schemas to the provider, receives structured tool calls,
 validates JSON arguments, resolves the existing registry, checks the permission
@@ -401,7 +401,7 @@ see [Security](docs/SECURITY.md) for the implemented boundary and limits.
 
 ## Next step
 
-Feature 3.5 — Conversation Context. Features 3.5–3.8 are not implemented.
+Feature 3.6 — Chat UI Integration. Features 3.6–3.8 are not implemented.
 Native Windows Open/Show in Folder validation,
 voice, WRITE confirmation, and packaging remain separate work.
 
@@ -431,8 +431,8 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Feature 3.4 extends this boundary as documented below. No frontend, memory or
-Features 3.5–3.8 are introduced.
+Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
+permanent memory and Features 3.6–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -458,7 +458,8 @@ Paths are revalidated even for pending requests. Missing records/files, replaced
 directories, outside paths and symlink/reparse escapes fail safely. A chained
 interaction requires the latest search in that request to return exactly one match
 and the requested ID; pagination does not make an ambiguous search unique. Narrow
-searches are allowed within the same request; no history survives the request.
+searches are allowed within the same request. Feature 3.5 also retains bounded
+verified references for explicit selection on later turns.
 
 Structured results retain `success`, `status`, `data`, `error_code`, `error_message`.
 New statuses include `CONFIRMATION_REQUIRED`, `UNSUPPORTED_FILE_TYPE`, `OS_ERROR`,
@@ -466,7 +467,8 @@ and `UNSUPPORTED_PLATFORM`. Validation/permission failures use existing statuses
 Request-local execution records track argument validation, permission approval,
 confirmation required and actual tool execution. Final text uses verified results;
 success means Windows accepted a request, never that the viewer rendered the file.
-The HTTP response shape stays unchanged, including null `pending_action`.
+The HTTP response retains these fields, including null `pending_action`;
+Feature 3.5 adds a conversation ID.
 
 Windows-native Python is required for real OS interactions. WSL/Linux return a
 structured unsupported-platform error for permitted reveal, with no shell fallback
@@ -499,7 +501,7 @@ For an optional real Explorer check, run **native Windows PowerShell** from `bac
 This reveals only the generated temporary `safe.txt`, waits for visual inspection,
 then cleans up. Opening remains mocked and must never be called: confirmation is
 not bypassed. Use `.\.venv\Scripts\python.exe` for the other commands on Windows.
-Features 3.5–3.8, conversation storage, full chat UI and write confirmation are absent.
+Features 3.6–3.8, permanent chat storage, full chat UI and write confirmation are absent.
 
 Feature 3.4 regression checks also cover narrowing an ambiguous search within one
 request, rejecting an ID different from the unique search result, and rejecting
@@ -507,3 +509,119 @@ interaction after a failed search or an empty pagination page. The latest search
 controls selection; an earlier successful search cannot override it. To run just
 these offline interaction tests: `cd backend && .venv/bin/python -m pytest -q tests/test_file_interactions.py`.
 These tests verify grounded failures as well as successful mocked reveal requests.
+
+## Feature 3.5: bounded conversation context
+
+Features 3.1–3.5 are implemented. Backend-owned, in-memory conversations support
+follow-ups to verified indexed file results without adding UI, permanent memory,
+write tools or confirmation workflows.
+
+`POST /agent/message` still accepts `{"message":"Find resumes"}`. It creates a
+random UUIDv4 conversation and returns `conversation_id` alongside the existing
+`message`, `result`, and `pending_action` fields. Continue with:
+
+```json
+{"conversation_id":"b53e3a9d-1d4f-4a1d-a8d3-77d9a4e7b219","message":"Show the second one in File Explorer."}
+```
+
+Use the actual returned ID. File conversations require the managed desktop Bearer
+credential and `X-Nova-Request: 1` on every request. The same origin/JSON protections
+apply to clearing:
+
+```text
+POST /agent/conversation/clear
+Content-Type: application/json
+{"conversation_id":"<returned UUID>"}
+```
+
+Clearing returns `{"status":"cleared"}` and removes the ID and its context.
+Malformed IDs return 422; unknown, expired, evicted, cleared or wrong-owner IDs
+all return 404. Supplied unknown IDs never create replacement conversations.
+Concurrent requests or clearing during a turn return 409. Different conversations
+can run concurrently. If capacity is full with no eligible idle session, creation
+returns 503. No session contents appear in these errors.
+
+The latest search/info lookup controls references; failed and empty lookups clear
+older references. Search responses include backend-numbered results in verified
+order. “The first/second/third one”, “number 2”, “file 3”, and “the last one” refer
+to that displayed page, starting at 1, including when the search uses an offset.
+Ordinals first through tenth are recognized. “That file”, “this file”, “open it”
+and “show it in folder” require a unique result; a one-row page of a larger search
+is not unique. Missing, ambiguous, out-of-range or compound selections ask for
+clarification without calling the provider or launching anything. Explicit older
+result-set selection and general natural-language reference understanding are not
+implemented. Explicit “indexed file 42” remains an indexed-ID request, not an ordinal.
+
+The selected ID and requested open/reveal operation are bound for that request.
+Conflicting IDs/operations, replacement searches and repeated interaction attempts
+are rejected before permission dispatch. The provider still proposes structured
+calls; resolution itself never executes an action. Every accepted call goes through
+the existing registry, permissions, fresh indexed lookup and path/type checks.
+Opening remains `CONFIRMATION_REQUIRED`. Reveal is pending unless the existing
+`NOVA_ALLOW_AGENT_REVEAL=true` policy is enabled. No approval is remembered.
+
+| Resource | Default bound |
+| --- | --- |
+| Inactive lifetime | 1,800 seconds (30 minutes) |
+| Active sessions per backend | 32 |
+| Stored messages per session | 20 (10 complete user/grounded-assistant pairs) |
+| Each stored message / input | 10,000 characters |
+| Serialized retained history estimate | 64 KiB, ASCII-escaped JSON |
+| Latest verified reference set | At most 50 indexed IDs and display names |
+| Tool result | 16 KiB per call, existing limit |
+| Estimated provider request context | 256 KiB, checked before each call |
+
+Set `NOVA_CONVERSATION_TIMEOUT_SECONDS` to an integer from 1 to 86400 and restart
+to change inactivity expiry. Other limits are service defaults, not new environment
+settings. Oldest complete turns are evicted to meet both history bounds; associated
+references disappear with their source turn. Oversized assistant messages are
+replaced by an omission notice and compact verified outcomes. An individually
+oversized serialized turn is evicted whole. Oversized reference sets are discarded
+whole. Cleanup runs on access, without a background worker. At capacity, the least
+recently active idle conversation of the same owner is evicted. Busy sessions are
+not expired/evicted. Backend restart loses all conversation state; use one worker.
+
+History uses provider-neutral completed exchanges. OpenAI translates them to user
+and assistant roles; older/custom providers use a compatibility adapter that passes
+history as untrusted user-level JSON. Raw SDK responses, opaque continuations and
+tool-call batches are never retained across requests. Within each request, the
+existing matched call/result protocol is preserved. Historical assistant text is
+not evidence of execution or authorization.
+
+Provider failures before any tool outcome leave existing history unchanged and
+remove an unused new session. Failures after tool outcomes commit a grounded
+failure exchange; the HTTP error keeps its status and includes verified outcomes
+in `detail`, plus `X-Nova-Conversation-ID` for continuation. Execution-limit replies
+also show verified outcomes. Completed side effects are never rolled back or
+blindly retried. Raw provider errors and incomplete tool protocols are not stored.
+
+Standalone text/arithmetic clients retain local-development access. They share an
+unauthenticated owner scope: IDs are unpredictable but are **not** a multi-user
+privacy boundary. They cannot reuse managed conversations or expose file tools.
+Managed callers share the authenticated desktop launch identity, not separate user
+accounts. No login system has been added. Existing local-process and compromised
+frontend limitations still apply.
+
+### Reproducible offline manual check
+
+With development dependencies installed, from `backend/`:
+
+```bash
+.venv/bin/python -m scripts.check_conversations
+.venv/bin/python -m pytest -q tests/test_conversations.py tests/test_openai_tools.py
+```
+
+On Windows use `.\.venv\Scripts\python.exe`. The demo explicitly injects the existing
+test-only ScriptedProvider into an in-process FastAPI TestClient, creates three
+synthetic text files and a temporary allowed directory/SQLite index, then prints
+the conversation ID and ordered search results. It requests the second result,
+checks the exact mocked Explorer path and indexed ID, verifies opening remains
+confirmation-required, tests a second conversation, clears the first, and verifies
+404 on reuse. Both native methods are mocked. No personal files, network requests,
+OpenAI credits, `.env` edits, running HTTP server or production fake-provider switch
+are required. The demo is also exercised by pytest.
+
+Live OpenAI multi-turn behavior and native Windows Explorer/file associations still
+require separate validation. The resolver is intentionally narrow; ordinary text
+grounding retains Feature 3.3's heuristic limitations. Feature 3.6 — Chat UI
+Integration is the next step; Features 3.6–3.8 have not been implemented.
