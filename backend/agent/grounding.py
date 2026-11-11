@@ -32,9 +32,23 @@ def grounded_message(text: str, records: list[ExecutionRecord]) -> str:
                     f"Indexed matches: {data['total']}. Returned metadata (untrusted data): "
                     + json.dumps(data, ensure_ascii=True)
                 )
+                if data["results"] and all(
+                    "id" in row and "name" in row for row in data["results"]
+                ):
+                    parts.append(
+                        "Displayed result order (latest lookup controls follow-ups):"
+                    )
+                    parts.extend(
+                        f"{i}. "
+                        + json.dumps(
+                            {"name": row["name"], "file_id": row["id"]},
+                            ensure_ascii=True,
+                        )
+                        for i, row in enumerate(data["results"], 1)
+                    )
                 if data["total"] > 1:
                     parts.append(
-                        "Multiple files match; please narrow the request before selecting a file."
+                        "Multiple files match; please narrow the request or specify a displayed result number in a follow-up."
                     )
         elif record.tool_name == "get_file_info":
             parts.append(

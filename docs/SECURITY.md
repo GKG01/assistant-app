@@ -227,8 +227,8 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Feature 3.4 extends this boundary as documented below. No frontend, memory or
-Features 3.5–3.8 are introduced.
+Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
+permanent memory and Features 3.6–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -272,3 +272,64 @@ pages, revoked allowed roots, and default-policy reveal preflight. Scripted prov
 responses falsely claiming successful interaction are replaced with verified error
 or confirmation messages. A narrower subsequent search permits only its unique
 indexed target; it does not grant opening authorization.
+
+## Feature 3.5 session and context boundaries
+
+Conversation IDs are random canonical UUIDv4 strings, validated before store access.
+They identify context and grant no authority. Managed conversations are bound to the
+existing authenticated desktop launch identity. Every continuation and clear request
+must pass the existing Bearer, `X-Nova-Request`, JSON and origin checks to access that
+scope. Omission/invalid credentials cannot downgrade an existing managed conversation
+into standalone context. Wrong-owner and absent IDs both return generic 404s. There
+is no history listing/enumeration endpoint. All agent POST bodies are size-bounded.
+
+Standalone text/arithmetic access is intentionally preserved, with an unauthenticated
+process-local owner scope. A caller with a standalone ID can reuse it; this is not
+multi-user isolation. File tools remain unavailable there. Different authenticated
+users are not modeled: the managed owner is the desktop launch, shared by authorized
+clients. Malicious local processes or a compromised trusted frontend remain outside
+the existing security boundary. No competing login/token scheme was added.
+
+Context is bounded and volatile: 32 sessions, 30 minutes inactivity by default,
+20 messages, 10,000 characters/message, 64 KiB serialized history and at most 50
+references in the latest result set. Request-local results are 16 KiB each and the
+agent checks a 256 KiB estimated context ceiling. Whole-turn eviction removes source
+references; clear, session eviction, expiry and restart make IDs unavailable. Cleanup
+is access-driven; inactive data may remain in memory until the next operation or
+process exit, but expired sessions cannot be used. No durable chat store or background
+worker exists. Busy sessions are protected from expiry/eviction and concurrent turn
+or clear requests return 409. A short lock makes bookkeeping atomic without holding
+all conversations behind a provider call. Anonymous creation cannot evict managed
+sessions; capacity exhaustion returns 503 when no same-owner idle victim exists.
+
+References come only from actual successful registered search/info execution records,
+never user claims, provider-generated IDs, assistant prose or failed calls. Stored
+references contain indexed IDs and display names, not arbitrary paths. New failed or
+empty lookups invalidate old selections. Display numbering comes from backend tool
+order, and the resolver uses that exact returned page; it does not parse assistant
+ordering. Missing/ambiguous/out-of-range references fail closed with clarification.
+The resolver is narrow (documented English phrases); it is not a general intent or
+natural-language authorization system.
+
+A resolved reference binds file ID and intended interaction for the entire request.
+Model substitutions, operation changes, new searches and duplicate interaction
+attempts are rejected. Valid calls still use exact approved registry implementations,
+strict schemas, PermissionManager and current indexed-record/path/type checks.
+Previous approval is never cached. Opening still requires unavailable backend
+confirmation and cannot execute; reveal still follows the existing explicit policy.
+Historical “confirmed” text and malicious filenames cannot set trusted dispatch flags.
+
+System instructions remain separate from history. OpenAI receives completed
+user/grounded-assistant roles; the compatibility adapter uses untrusted user-level
+JSON. Raw provider continuation, SDK objects and tool batches are not retained across
+turns, so trimming cannot orphan tool results. Historical assistant messages are
+context, not evidence. Current execution records determine action claims. Provider
+errors after tool outcomes commit and display verified outcomes alongside the safe
+error; errors before outcomes do not add a turn. No side-effectful retry is added.
+
+Offline tests cover ownership, expiry/clear/eviction, concurrency, bounded context,
+ordered selection, cross-session substitution, hostile historical data, confirmation,
+policy revocation, missing files, executable restrictions and symlink escapes. They
+mock native launches and the provider/SDK transport. Existing native race limitations
+and heuristic ordinary-text grounding limitations remain; neither live OpenAI nor
+Windows-native behavior is certified by these tests. Features 3.6–3.8 remain separate.

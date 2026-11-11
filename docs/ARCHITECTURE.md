@@ -1,6 +1,6 @@
 # Architecture
 
-Features 3.2–3.4 connect BRAIN to explicit read-only and guarded interactive HANDS.
+Features 3.2–3.5 connect BRAIN to explicit read-only and guarded interactive HANDS.
 GUARD controls every execution and retains the existing path and session boundaries.
 
 ```mermaid
@@ -78,13 +78,15 @@ Each request has at most 5 provider iterations, 10 tool calls, and 4 calls per r
 The last iteration cannot start another tool batch. Arguments are capped at 8 KiB
 and results at 16 KiB. Search truncation removes complete records and marks metadata.
 A limit response explicitly indicates possible partial completion. Provider timeouts
-apply per call. There are no background tasks, session IDs or persisted turns.
+apply per call. There are no background tasks or durable turns; Feature 3.5 adds bounded session IDs
+and in-memory history as described below.
 
 Results contain `success`, `data`, `error_code`, `error_message`. Empty search results
 are successful empty arrays. Error categories distinguish invalid arguments, unknown
 tools, denied permission, missing records, execution/serialization failure and excess
 result size. Provider protocol errors remain sanitized HTTP failures. The final HTTP
-shape stays `message` with null `result` and `pending_action` placeholders.
+shape retains `message` with null `result` and `pending_action` placeholders;
+Feature 3.5 adds `conversation_id`.
 
 The route keeps the existing JSON/origin/body validation. It grants file-tool access
 only when the existing managed-session and file-header checks pass. Other requests
@@ -214,8 +216,8 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Feature 3.4 extends this boundary as documented below. No frontend, memory or
-Features 3.5–3.8 are introduced.
+Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
+permanent memory and Features 3.6–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -258,3 +260,86 @@ a failed subsequent search or an empty page invalidates selection even when an
 earlier search returned one file. The executor checks this before permission
 dispatch; rejected selections never reach the OS service. Provider-facing tool
 descriptions explain the pending-open and policy-controlled-reveal behavior.
+
+## Feature 3.5 conversation pipeline
+
+```text
+User Request + Optional Conversation ID
+                ↓
+       Session Authorization
+                ↓
+       Conversation Context
+                ↓
+       Reference Resolution
+                ↓
+        Agent Orchestrator
+                ↓
+       Provider-Neutral LLM
+                ↓
+         Structured Tools
+                ↓
+          GUARD Checks
+                ↓
+       Verified Tool Results
+                ↓
+      Context State Update
+                ↓
+       Grounded Response
+```
+
+`create_app` owns one `ConversationStore` per lifespan. No schema migration or
+permanent chat database is introduced. The existing agent accepts an immutable
+context snapshot and a request-local execution-record collector; there is no second
+orchestrator. The route uses the existing file-client authorization to select the
+managed desktop identity or the explicitly limited standalone identity. A client
+cannot supply that identity or select a privilege level through request JSON.
+
+Private sessions track monotonic creation/activity times, a busy flag, numbered
+complete turns and a latest `ReferenceSet`. Snapshots contain immutable tuples and
+frozen provider-neutral `ConversationTurn` and reference objects. No mutable session
+objects, credentials or ownership fields are passed to the provider. A short store
+lock protects bookkeeping, never provider/tool work. A busy lease rejects overlapping
+turns/clear with 409 and is released on every exit. Different sessions proceed
+independently. Expiry is lazy; capacity eviction chooses the oldest idle session of
+the same owner, preventing anonymous traffic from evicting managed context.
+
+Defaults: 32 sessions, 30-minute configurable inactivity timeout, 20 messages,
+10,000 characters/message, 64 KiB serialized history estimate, 50 references in one
+latest set. Whole turns are removed, including their associated references, until
+both history budgets fit. A committed turn can be evicted entirely without deleting
+its session ID. An oversized assistant response becomes a compact omission/outcome
+message. Request-local tool outputs retain the 16 KiB bound; the agent also stops
+before another provider call if estimated context exceeds 256 KiB.
+
+`generate_with_context` adds completed exchanges to the provider abstraction while
+preserving `generate` and `generate_with_tools`. OpenAI uses native user/assistant
+roles; the base compatibility adapter serializes earlier exchanges as untrusted
+user-level JSON. System instructions remain separate. Current-request call/output
+pairs and opaque provider continuation remain unchanged; neither is retained across
+requests. Eviction therefore cannot create orphaned tool messages. Grounded assistant
+snapshots contain relevant verified outcomes without needing a historical SDK replay.
+
+Only successful, actually executed `search_files`/`get_file_info` records populate
+references. They retain IDs, names, source, source turn and timestamp, not paths or
+permission approvals. The tuple order is the tool's returned order and matches the
+backend-numbered response. Failed/empty subsequent lookups clear older selections.
+A single-row page with a larger total is ambiguous for pronouns. Numeric selections
+are page-relative. Reference expiry follows source-turn eviction/session lifecycle.
+
+The narrow resolver produces either clarification or an immutable selected ID and
+operation. The latter is an unprivileged provider hint plus an independently enforced
+executor constraint. Conflicting file IDs, operation changes, replacement searches
+and duplicate interaction attempts fail before GUARD dispatch. Same-request unique
+search checks from Feature 3.4 remain in force. No store code performs file operations.
+
+The API adds `conversation_id` to the existing response and an optional request
+field. `POST /agent/conversation/clear` removes a validated owned ID. Malformed IDs
+are 422; missing/expired/cleared/evicted/wrong-owner IDs are indistinguishable 404s.
+Provider errors before tool outcomes roll back the exchange. After outcomes, the
+route commits a safe failure exchange, exposes grounded outcomes in error `detail`
+and returns `X-Nova-Conversation-ID`. Limits likewise retain and display outcomes;
+no tool is retried automatically. Existing response placeholders remain unchanged.
+
+Use one backend worker. Restart loses sessions; no UI storage, login system,
+background cleanup, long-term memory or new dependencies are introduced. See README
+for configuration and the offline `scripts.check_conversations` walkthrough.

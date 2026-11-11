@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from agent.schemas import ToolCall, ToolResult, ExecutionRecord, PendingAction
 from agent.tool_registry import ToolRegistry, UnknownToolError
+from agent.references import ResolvedReference
 from permissions.manager import PermissionManager
 from permissions.policies import RiskLevel
 from services.file_actions import UnsupportedFileTypeError
@@ -137,10 +138,17 @@ class AgentToolExecutor:
         *,
         file_access: bool,
         history: list[ExecutionRecord] | None = None,
+        resolved: ResolvedReference | None = None,
     ) -> ExecutionRecord:
         record = ExecutionRecord(tool_call_id=call.id, tool_name=call.name)
         record.result = json.loads(
-            self.execute(call, file_access=file_access, record=record, history=history)
+            self.execute(
+                call,
+                file_access=file_access,
+                record=record,
+                history=history,
+                resolved=resolved,
+            )
         )
         record.state = (
             ("completed" if record.result["success"] else "failed")
@@ -159,11 +167,16 @@ class AgentToolExecutor:
         file_access: bool,
         record: ExecutionRecord | None = None,
         history: list[ExecutionRecord] | None = None,
+        resolved: ResolvedReference | None = None,
     ) -> str:
         try:
             return bounded_result(
                 self._execute(
-                    call, file_access=file_access, record=record, history=history
+                    call,
+                    file_access=file_access,
+                    record=record,
+                    history=history,
+                    resolved=resolved,
                 )
             )
         except FileNotFoundError:
@@ -207,6 +220,7 @@ class AgentToolExecutor:
         file_access: bool,
         record: ExecutionRecord | None = None,
         history: list[ExecutionRecord] | None = None,
+        resolved: ResolvedReference | None = None,
     ) -> dict[str, Any]:
         try:
             tool = self.registry.get(call.name)
@@ -241,6 +255,27 @@ class AgentToolExecutor:
 
         if record is not None:
             record.arguments_validated = True
+        if resolved is not None:
+            if (
+                call.name == "search_files"
+                or (
+                    call.name in {"get_file_info", *INTERACTION_TOOLS}
+                    and arguments.file_id != resolved.file_id
+                )
+                or (
+                    call.name in INTERACTION_TOOLS
+                    and (
+                        call.name != resolved.operation
+                        or any(
+                            r.tool_name in INTERACTION_TOOLS for r in (history or [])
+                        )
+                    )
+                )
+            ):
+                return error(
+                    "INVALID_ARGUMENTS",
+                    "The proposed action conflicts with the selected file or operation. Please clarify your request.",
+                )
         if call.name in INTERACTION_TOOLS:
             searches = [r for r in (history or []) if r.tool_name == "search_files"]
             if searches:

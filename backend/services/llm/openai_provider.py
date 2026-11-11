@@ -22,12 +22,30 @@ from services.llm.base import (
     LLMToolCall,
     LLMToolDefinition,
     LLMToolTurn,
+    ConversationTurn,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAIProvider(LLMProvider):
+    async def generate_with_context(
+        self,
+        message: str,
+        *,
+        history: tuple[ConversationTurn, ...],
+        system_prompt: str,
+        tools: list[LLMToolDefinition],
+        turns: list[LLMToolTurn],
+    ) -> LLMReply:
+        return await self._generate(
+            message,
+            system_prompt=system_prompt,
+            tools=tools,
+            turns=turns,
+            history=history,
+        )
+
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.openai_api_key
         self._model = settings.openai_model
@@ -61,6 +79,7 @@ class OpenAIProvider(LLMProvider):
         system_prompt: str,
         tools: list[LLMToolDefinition] | None = None,
         turns: Sequence[LLMToolTurn] = (),
+        history: tuple[ConversationTurn, ...] = (),
     ) -> LLMReply:
         started = perf_counter()
         logger.info("AI provider request started")
@@ -78,7 +97,15 @@ class OpenAIProvider(LLMProvider):
                 payload = {}
                 input_value = message
                 if tools is not None:
-                    input_value = [{"role": "user", "content": message}]
+                    input_value = [
+                        item
+                        for exchange in history
+                        for item in (
+                            {"role": "user", "content": exchange.user},
+                            {"role": "assistant", "content": exchange.assistant},
+                        )
+                    ]
+                    input_value.append({"role": "user", "content": message})
                     for turn in turns:
                         if turn.reply.continuation is None:
                             raise LLMError("invalid_response")
