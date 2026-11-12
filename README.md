@@ -1,8 +1,8 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. Features 3.1–3.6 add
-AI responses, bounded structured tool calling, grounding, and guarded file interactions. The backend still starts without a provider
+Phase 2 provides deterministic local file indexing and search. Features 3.1–3.7 add
+AI responses, bounded structured tool calling, grounding, guarded file interactions, and explicitly confirmed writes. The backend still starts without a provider
 key; deterministic file features remain available. Voice remains a stub.
 
 ## Architecture and stack
@@ -686,3 +686,71 @@ is separate from the backend's shorter bounded history. Chat is volatile, with n
 history sidebar, permanent memory, voice, Markdown execution or write tools.
 Features 3.1–3.6 are implemented; Feature 3.7 (Write Tools + Confirmation) and
 Feature 3.8 remain future work.
+
+## Feature 3.7 — Write tools and confirmation
+
+Chat can propose `create_folder`, `rename_file`, and `move_file`. The first tool
+call validates a proposal only: **nothing changes until you click Confirm** on
+its structured confirmation card. Cancel prevents execution. Chat messages such
+as “yes,” historical approvals, and model output cannot approve an action.
+Opening/revealing retain their existing Feature 3.4 policy; these confirmation
+endpoints authorize only the three write tools.
+
+Pending actions expire after 120 seconds by default. Set backend-only
+`NOVA_CONFIRMATION_TIMEOUT_SECONDS` (10–600 seconds) to change this. Actions are
+volatile, conversation-bound, bound to the managed desktop launch, and consumed
+once. New Conversation invalidates pending actions. Restart/expired conversations
+make them unavailable. Only one pending write per conversation is supported.
+Failed or uncertain operations are never automatically retried.
+
+Directory references are issued by the backend for existing allowed roots and
+immediate child directories (up to 64 references, examining up to 256 entries per
+root). No arbitrary path argument or automatic allowlist expansion exists. To use
+a deeper destination, explicitly configure it as an allowed root and restart.
+Files still use indexed IDs, including verified “the second one” follow-ups.
+Ambiguous locations require clarification. New folders appear in the next
+catalog; directories are not stored as file-index rows.
+
+All writes reject existing targets, including pre-existing case variants. Rename
+and move use native no-replace operations, without copy/delete fallback.
+Cross-volume moves, links/reparse points, multiply linked source files, invalid
+Windows names, names over 120 UTF-16 units, and paths of 240 or more characters
+are rejected. Changed source identity/metadata or changed parent identity rejects
+the action. Rename/move preserve indexed IDs; if index synchronization fails after
+a filesystem success, the UI reports that partial outcome and asks you to refresh
+Files. It never attempts an unsafe compensating move.
+
+Offline verification requires no OpenAI credits:
+
+```bash
+cd backend
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff format --check .
+cd ../desktop
+npm test
+npm run format:check
+npm run typecheck
+npm run build
+```
+
+Use `.venv\Scripts\python.exe` on Windows. Tests use scripted providers, temporary
+files/databases, and mocked UI requests; no personal directories or paid API calls.
+Native Windows validation and live-provider validation remain separate. Linux
+uses `renameat2(RENAME_NOREPLACE)` and directory descriptors; unsupported platforms
+or filesystems fail closed. External processes can still race source names on
+Linux; see [Security](docs/SECURITY.md). Native Windows filesystem integration has
+not been certified by the Linux tests.
+
+Manual Windows check: configure a disposable allowed directory with a text file
+and an `Applications` child folder, start `npm run tauri dev`, and refresh Files.
+Request each write, verify no change before confirming, then inspect the actual
+filesystem and refreshed search result. Also cancel a proposal, wait past expiry,
+replace a source before confirming, create a colliding target, and reset the
+conversation. Verify each rejects safely. Test locked files, junctions, access
+denial, and cross-volume destinations on Windows. These manual chat checks need
+a configured real provider; offline API scenarios are in
+`backend/tests/test_write_actions.py`.
+
+Phase 3 Features 3.1–3.7 are implemented; Feature 3.8 — Audit, Limits & Hardening
+is the next feature and is not implemented here. No deletion, arbitrary content
+editing, batch mutation, or autonomous execution capability was added.

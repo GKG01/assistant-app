@@ -39,7 +39,7 @@ ORDINALS = {
 REFERENCE = re.compile(
     r"\b(?:the\s+)?(" + "|".join(ORDINALS) + r"|last)\s+(?:one|file)\b"
     r"|(?<!indexed )\b(?:number|file)\s+(\d{1,9})\b"
-    r"|\b(?:that|this)\s+file\b|\b(?:open|show|reveal)\s+it\b",
+    r"|\b(?:that|this)\s+file\b|\b(?:open|show|reveal|rename|move)\s+it\b",
     re.I,
 )
 
@@ -89,7 +89,10 @@ def resolve_reference(message: str, references: ReferenceSet | None) -> Resoluti
             and re.search(r"\b(folder|explorer)\b", message, re.I)
         )
     )
-    if opening and revealing:
+    renaming = bool(re.search(r"\brename\b", message, re.I))
+    moving = bool(re.search(r"\bmove\b", message, re.I))
+    if sum((opening, revealing, renaming, moving)) > 1:
         return Resolution(clarification="Please request one file operation at a time.")
     operation = "open_file" if opening else "show_in_folder" if revealing else None
+    operation = "rename_file" if renaming else "move_file" if moving else operation
     return Resolution(ResolvedReference(references.files[index - 1].file_id, operation))

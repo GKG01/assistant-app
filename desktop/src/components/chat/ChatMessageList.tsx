@@ -1,13 +1,18 @@
 import { useLayoutEffect, useRef } from "react";
 import type { ChatMessage } from "../../types/chat";
+import type { DecideAction } from "./ConfirmationCard";
 import { ChatToolStatus } from "./ChatToolStatus";
 
 export function ChatMessageList({
   messages,
   busy,
+  decide,
+  actionsDisabled,
 }: {
   messages: ChatMessage[];
   busy: boolean;
+  decide?: DecideAction;
+  actionsDisabled?: boolean;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -56,7 +61,11 @@ export function ChatMessageList({
             </p>
           )}
           {message.toolExecutions && (
-            <ChatToolStatus records={message.toolExecutions} />
+            <ChatToolStatus
+              records={message.toolExecutions}
+              decide={decide}
+              disabled={actionsDisabled}
+            />
           )}
         </article>
       ))}

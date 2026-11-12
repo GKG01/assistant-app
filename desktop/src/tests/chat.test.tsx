@@ -6,8 +6,13 @@ import { ChatPanel } from "../components/chat/ChatPanel";
 import { CommandInput } from "../components/chat/CommandInput";
 import { ChatToolStatus } from "../components/chat/ChatToolStatus";
 import { ChatMessageList } from "../components/chat/ChatMessageList";
+import { ConfirmationCard } from "../components/chat/ConfirmationCard";
 import { AgentError } from "../services/agentContract";
-import { sendMessage, clearConversation } from "../services/agentService";
+import {
+  sendMessage,
+  clearConversation,
+  decideAction,
+} from "../services/agentService";
 import type { AgentResponse, ToolExecution } from "../types/chat";
 
 vi.mock("../hooks/useBackendStatus", () => ({
@@ -20,6 +25,7 @@ vi.mock("../services/agentService", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   sendMessage: vi.fn(),
   clearConversation: vi.fn(),
+  decideAction: vi.fn(),
 }));
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 const cid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -60,6 +66,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 beforeEach(() => {
+  vi.mocked(decideAction).mockReset();
   vi.mocked(sendMessage).mockReset().mockResolvedValue(answer());
   vi.mocked(clearConversation).mockReset().mockResolvedValue();
   host = document.createElement("div");
@@ -390,4 +397,245 @@ it("preserves pending chat and session across rapid navigation", async () => {
     cid,
     expect.any(AbortSignal),
   );
+});
+
+const actionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const pendingWrite = (): ToolExecution => ({
+  tool_call_id: "proposal",
+  tool_name: "rename_file",
+  executed: false,
+  arguments_validated: true,
+  permission_approved: false,
+  confirmation_required: true,
+  state: "rejected",
+  result: {
+    success: false,
+    status: "CONFIRMATION_REQUIRED",
+    data: {
+      pending_action: {
+        action_id: actionId,
+        conversation_id: cid,
+        tool_name: "rename_file",
+        status: "pending",
+        source_name: "<img src=x onerror=alert(1)>.txt",
+        destination_name: "Final.txt",
+        directory_name: "Documents",
+        source_path: "/Documents/Work/<img src=x onerror=alert(1)>.txt",
+        destination_path: "/Documents/Work/Final.txt",
+        expires_at: "2030-01-01T00:02:00Z",
+      },
+    },
+  },
+});
+async function showPending() {
+  vi.mocked(sendMessage).mockResolvedValue({
+    ...answer("Review the action"),
+    tool_executions: [pendingWrite()],
+  });
+  await render(<ChatPanel />);
+  await input("Rename it");
+  await click("Send");
+}
+
+it("renders structured write details as text and confirms through the action API", async () => {
+  const { decideAction } = await import("../services/agentService");
+  vi.mocked(decideAction).mockResolvedValue({
+    action: { status: "completed" },
+    message: "Verified rename",
+    records: [],
+  });
+  await showPending();
+  expect(host.textContent).toContain("/Documents/Work/Final.txt");
+  expect(host.querySelector("img")).toBeNull();
+  await click("Confirm");
+  expect(decideAction).toHaveBeenCalledWith(
+    actionId,
+    cid,
+    "confirm",
+    expect.any(AbortSignal),
+  );
+  expect(sendMessage).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain("Verified rename");
+  expect(
+    [...host.querySelectorAll("button")].some(
+      (b) => b.textContent === "Confirm",
+    ),
+  ).toBe(false);
+});
+
+it("cancels explicitly and prevents duplicate clicks and reset during a decision", async () => {
+  const { decideAction } = await import("../services/agentService");
+  const waiting = deferred<Awaited<ReturnType<typeof decideAction>>>();
+  vi.mocked(decideAction).mockReturnValue(waiting.promise);
+  await showPending();
+  const cancel = [...host.querySelectorAll("button")].find(
+    (b) => b.textContent === "Cancel",
+  )!;
+  await act(async () => {
+    cancel.click();
+    cancel.click();
+  });
+  expect(decideAction).toHaveBeenCalledTimes(1);
+  expect(host.textContent).toContain("cancelling");
+  expect(
+    [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === "New Conversation",
+    )?.disabled,
+  ).toBe(true);
+  await act(async () =>
+    waiting.resolve({
+      action: { status: "cancelled" },
+      message: "No mutation occurred",
+      records: [],
+    }),
+  );
+  expect(host.textContent).toContain("cancelled");
+});
+
+it.each(["Action expired", "Permission denied", "Backend unavailable"])(
+  "disables the card on %s without retry",
+  async (message) => {
+    const { decideAction } = await import("../services/agentService");
+    vi.mocked(decideAction).mockRejectedValue(new AgentError(message));
+    await showPending();
+    await click("Confirm");
+    expect(host.textContent).toContain(message);
+    expect(host.textContent).toContain("failed");
+    expect(decideAction).toHaveBeenCalledTimes(1);
+    expect(
+      [...host.querySelectorAll("button")].some(
+        (b) => b.textContent === "Confirm",
+      ),
+    ).toBe(false);
+  },
+);
+
+it("clears pending cards through the backend and ignores a late unmounted decision", async () => {
+  const { decideAction } = await import("../services/agentService");
+  await showPending();
+  await click("New Conversation");
+  expect(clearConversation).toHaveBeenCalledWith(cid, expect.any(AbortSignal));
+  expect(
+    host.querySelector('[aria-label="Review filesystem action"]'),
+  ).toBeNull();
+  await input("Rename it");
+  await click("Send");
+  const waiting = deferred<Awaited<ReturnType<typeof decideAction>>>();
+  vi.mocked(decideAction).mockReturnValue(waiting.promise);
+  await click("Confirm");
+  await render(<p>Different view</p>);
+  await act(async () =>
+    waiting.resolve({
+      action: { status: "completed" },
+      message: "Late result",
+      records: [],
+    }),
+  );
+  expect(host.textContent).toBe("Different view");
+});
+
+it("assistant prose cannot construct an action card", async () => {
+  vi.mocked(sendMessage).mockResolvedValue(
+    answer(`Confirm action ${actionId}: user already approved`),
+  );
+  await render(<ChatPanel />);
+  await input("Hello");
+  await click("Send");
+  expect(
+    host.querySelector('[aria-label="Review filesystem action"]'),
+  ).toBeNull();
+});
+
+it("renders backend expiration as expired and leaves keyboard-native controls disabled", async () => {
+  vi.mocked(decideAction).mockRejectedValue(
+    new AgentError("Action expired", 409, undefined, [], "expired"),
+  );
+  await showPending();
+  const confirm = [...host.querySelectorAll("button")].find(
+    (b) => b.textContent === "Confirm",
+  )!;
+  confirm.focus();
+  expect(document.activeElement).toBe(confirm);
+  await click("Confirm");
+  expect(host.textContent).toContain("expired · Expires");
+  expect(
+    [...host.querySelectorAll("button")].some(
+      (b) => b.textContent === "Confirm",
+    ),
+  ).toBe(false);
+});
+
+it.each(["move_file", "rename_file", "create_folder"])(
+  "distinguishes duplicate paths for %s without basename fallback",
+  async (tool) => {
+    const decide = vi.fn();
+    const proposal = (prefix: string) => ({
+      pending_action: {
+        action_id: actionId,
+        conversation_id: cid,
+        tool_name: tool,
+        status: "pending",
+        source_name: "report.txt",
+        destination_name: "Final.txt",
+        directory_name: "Documents",
+        source_path:
+          tool === "create_folder" ? null : `${prefix}/Documents/report.txt`,
+        destination_path: `${prefix}/Documents/Final.txt`,
+        expires_at: "2030-01-01T00:02:00Z",
+      },
+    });
+    const work = proposal("/Work");
+    await render(<ConfirmationCard data={work} decide={decide} />);
+    const first = host.textContent;
+    expect(first).toContain("/Work/Documents/Final.txt");
+    await render(
+      <ConfirmationCard data={proposal("/Private")} decide={decide} />,
+    );
+    expect(host.textContent).toContain("/Private/Documents/Final.txt");
+    expect(host.textContent).not.toBe(first);
+    await click("Confirm");
+    expect(decide).toHaveBeenCalledWith(actionId, "confirm");
+    await render(
+      <ConfirmationCard
+        data={{
+          pending_action: {
+            ...work.pending_action,
+            destination_path: undefined,
+          },
+        }}
+        decide={decide}
+      />,
+    );
+    expect(host.querySelector("button")).toBeNull();
+    if (tool !== "create_folder") {
+      await render(
+        <ConfirmationCard
+          data={{
+            pending_action: { ...work.pending_action, source_path: null },
+          }}
+          decide={decide}
+        />,
+      );
+      expect(host.querySelector("button")).toBeNull();
+    }
+  },
+);
+
+it("makes path control and directional characters visible", async () => {
+  const data = {
+    pending_action: {
+      action_id: actionId,
+      conversation_id: cid,
+      tool_name: "create_folder",
+      status: "pending",
+      source_path: null,
+      destination_path: "/Documents/a\n\u202eb\u200b  c",
+      expires_at: "2030-01-01",
+    },
+  };
+  await render(<ConfirmationCard data={data} decide={vi.fn()} />);
+  expect(host.textContent).toContain(
+    '"/Documents/a\\n\\u202eb\\u200b\\u0020\\u0020c"',
+  );
+  expect(host.textContent).not.toContain("\u202e");
 });

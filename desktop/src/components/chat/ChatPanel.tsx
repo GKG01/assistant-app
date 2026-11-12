@@ -37,6 +37,8 @@ export function ChatPanel() {
       </header>
       <ChatMessageList
         messages={chat.messages}
+        decide={chat.decide}
+        actionsDisabled={busy || chat.blocked}
         busy={chat.state === "sending"}
       />
       {chat.state === "clearing" && (

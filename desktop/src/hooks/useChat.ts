@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AgentError,
+  decideAction,
+  isObject,
   clearConversation,
   MAX_MESSAGE_LENGTH,
   sendMessage,
@@ -10,7 +12,9 @@ import type { ChatMessage } from "../types/chat";
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string>();
-  const [state, setState] = useState<"idle" | "sending" | "clearing">("idle");
+  const [state, setState] = useState<
+    "idle" | "sending" | "clearing" | "deciding"
+  >("idle");
   const [error, setError] = useState("");
   const [blocked, setBlocked] = useState(false);
   const active = useRef<AbortController | null>(null);
@@ -92,6 +96,91 @@ export function useChat() {
     return true;
   }
 
+  async function decide(actionId: string, decision: "confirm" | "cancel") {
+    if (active.current || !conversationId || blocked) return;
+    const contains = messages.some((m) =>
+      m.toolExecutions?.some((r) => {
+        const data = r.result.data;
+        return (
+          isObject(data) &&
+          isObject(data.pending_action) &&
+          data.pending_action.action_id === actionId &&
+          data.pending_action.conversation_id === conversationId &&
+          data.pending_action.status === "pending"
+        );
+      }),
+    );
+    if (!contains) return;
+    const controller = new AbortController();
+    active.current = controller;
+    const current = () => mounted.current && active.current === controller;
+    const update = (status: string) =>
+      setMessages((previous) =>
+        previous.map((m) => ({
+          ...m,
+          toolExecutions: m.toolExecutions?.map((r) => {
+            const data = r.result.data;
+            if (
+              !isObject(data) ||
+              !isObject(data.pending_action) ||
+              data.pending_action.action_id !== actionId
+            )
+              return r;
+            return {
+              ...r,
+              result: {
+                ...r.result,
+                data: {
+                  ...data,
+                  pending_action: { ...data.pending_action, status },
+                },
+              },
+            };
+          }),
+        })),
+      );
+    update(decision === "confirm" ? "confirming" : "cancelling");
+    setState("deciding");
+    setError("");
+    try {
+      const result = await decideAction(
+        actionId,
+        conversationId,
+        decision,
+        controller.signal,
+      );
+      if (!current()) return;
+      update(String(result.action.status));
+      setMessages((previous) => [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.message,
+          status: "completed",
+          toolExecutions: result.records,
+        },
+      ]);
+    } catch (caught) {
+      if (!current()) return;
+      update(
+        caught instanceof AgentError && caught.actionStatus
+          ? caught.actionStatus
+          : "failed",
+      );
+      setError(
+        caught instanceof AgentError
+          ? caught.message
+          : "Action outcome unknown. Check the filesystem before requesting another action.",
+      );
+    } finally {
+      if (current()) {
+        active.current = null;
+        setState("idle");
+      }
+    }
+  }
+
   async function reset(): Promise<boolean> {
     // Clearing a busy server session is rejected. Wait for the current request.
     if (active.current) return false;
@@ -135,5 +224,6 @@ export function useChat() {
     blocked: blocked || messages.length >= 100,
     send,
     reset,
+    decide,
   };
 }

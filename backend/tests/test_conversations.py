@@ -546,7 +546,7 @@ def test_concurrent_turn_rejected_other_conversation_progresses(conversation_cli
     original = provider.generate_with_context
 
     async def blocking(message, **kwargs):
-        if message == "Wait":
+        if message.split("\n", 1)[0] == "Wait":
             entered.set()
             await run_in_threadpool(release.wait, 10)
             return LLMReply(text="Finished")

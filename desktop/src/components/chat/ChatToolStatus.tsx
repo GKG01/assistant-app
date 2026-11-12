@@ -1,3 +1,4 @@
+import { ConfirmationCard, type DecideAction } from "./ConfirmationCard";
 import type { ToolExecution } from "../../types/chat";
 import type { IndexedFile } from "../../types/api";
 import { isObject } from "../../services/agentService";
@@ -40,6 +41,15 @@ function files(record: ToolExecution): IndexedFile[] {
 }
 
 export function toolStatus(record: ToolExecution): string {
+  if (record.result.status === "INDEX_SYNC_FAILED")
+    return "Filesystem completed; index synchronization failed. Refresh the index.";
+  if (record.result.status === "CANCELLED")
+    return "Cancelled — no filesystem mutation.";
+  if (
+    ["create_folder", "rename_file", "move_file"].includes(record.tool_name) &&
+    record.confirmation_required
+  )
+    return "Write proposal — see confirmation status below.";
   if (
     record.confirmation_required ||
     record.result.status === "CONFIRMATION_REQUIRED"
@@ -66,7 +76,15 @@ export function toolStatus(record: ToolExecution): string {
     : "Requested; execution unverified.";
 }
 
-export function ChatToolStatus({ records }: { records: ToolExecution[] }) {
+export function ChatToolStatus({
+  records,
+  decide,
+  disabled,
+}: {
+  records: ToolExecution[];
+  decide?: DecideAction;
+  disabled?: boolean;
+}) {
   return (
     <div className="mt-3 space-y-3">
       {records.map((record, index) => {
@@ -79,6 +97,11 @@ export function ChatToolStatus({ records }: { records: ToolExecution[] }) {
             <p className="text-sm text-teal-200">
               {record.tool_name}: {toolStatus(record)}
             </p>
+            <ConfirmationCard
+              data={record.result.data}
+              decide={decide}
+              disabled={disabled}
+            />
             {rows.length > 0 && (
               <>
                 <p className="my-2 text-xs text-slate-400">

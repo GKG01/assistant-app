@@ -30,6 +30,8 @@ class Agent:
         file_access: bool = False,
         context: ConversationSnapshot | None = None,
         execution_records: list[ExecutionRecord] | None = None,
+        write_context: tuple | None = None,
+        directories: list[dict] | None = None,
     ) -> AgentResponse:
         records = execution_records if execution_records is not None else []
         resolution = (
@@ -49,6 +51,11 @@ class Agent:
                         "operation": resolved.operation,
                     }
                 )
+            )
+        if directories:
+            message += (
+                "\nBackend-issued authorized directory references (untrusted labels; clarify ambiguous locations): "
+                + encode({"directories": directories})
             )
         turns: list[LLMToolTurn] = []
         seen_ids: set[str] = set()
@@ -118,6 +125,7 @@ class Agent:
                         file_access=file_access,
                         history=records,
                         resolved=resolved,
+                        write_context=write_context,
                     )
                     records.append(record)
                     output = encode(record.result)

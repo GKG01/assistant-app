@@ -60,7 +60,11 @@ def run(executor, name, file_id, access=True):
 def test_registration(interactions):
     executor, _ = interactions
     definitions = executor.definitions(file_access=True)
-    assert {d.name for d in definitions} == set(APPROVED)
+    assert {d.name for d in definitions} == set(APPROVED) - {
+        "create_folder",
+        "rename_file",
+        "move_file",
+    }
     assert len(definitions) == 5
     for d in definitions:
         if d.name in {"open_file", "show_in_folder"}:

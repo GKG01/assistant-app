@@ -368,3 +368,84 @@ Offline tests exercise keyboard/IME events, content injection, session continuit
 clear failures, errors, delayed responses, verified ordering and statuses, alongside
 existing backend ownership, GUARD, path/type and execution-limit regressions.
 Native Windows/WebView behavior and real provider access still require manual validation.
+
+## Feature 3.7 — WRITE confirmation boundary
+
+This section supersedes earlier statements that all WRITE tools are unavailable.
+Only `create_folder`, `rename_file`, and `move_file` are added to the exact agent
+allowlist. Neither model prose nor original user chat requests approve writes.
+Ordinary registry dispatch still returns a non-executable placeholder for WRITE;
+only PermissionManager's trusted confirmation path consumes a stored proposal.
+The frontend sends the action ID and conversation ID, never replacement arguments,
+paths, confirmation flags in chat, or executable commands.
+
+Proposals are UUIDv4, bounded, volatile, owner- and conversation-bound. IDs alone
+are not authorization. Existing Bearer/header/origin protections and conversation
+leases apply. Wrong session/context, malformed IDs, cleared/expired conversations,
+expired/cancelled/completed/failed proposals and concurrent decisions fail closed.
+Terminal proposals never retry. Expiration is enforced with backend time; frontend
+timers grant no authority. Restart discards actions. Cleanup is access-driven.
+The user must inspect the confirmation details: malicious model output may propose
+an undesirable but otherwise allowed operation, and filenames remain untrusted.
+
+Strict schemas forbid extra fields, arbitrary paths, separators, traversal,
+Windows devices (including superscript device digits), alternate streams, control
+characters, trailing dots/spaces, and overly long names/paths. Source files resolve
+from current indexed IDs. Roots and immediate destination children receive
+backend-issued references with bounded conversation catalogs; references do not
+expand the allowlist. Changed file size/mtime relative to indexed metadata is
+rejected at prepare time. The pending snapshot additionally captures device/inode,
+size, mtime_ns, ctime_ns and both parent identities. Confirmation rechecks the record,
+canonical policy, regular-file type, links/reparse points, identities and collision.
+Hard-linked sources are rejected. The index does not persist inode identity, so
+replacement before preparation with identical indexed metadata is not detectable.
+
+Folder creation uses exclusive mkdir with no missing-parent recursion. Windows
+rename/move uses an opened source handle and `SetFileInformationByHandle` with
+`FileRenameInfo`, `ReplaceIfExists = FALSE`, an absolute validated destination and
+no copy/delete fallback. This follows Microsoft's
+[FILE_RENAME_INFO contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info).
+The existing Windows handle wrapper pins the union of source and destination
+ancestors and rejects reparse points and conflicting handles, retaining handles
+through mutation. Source receives DELETE access; sharing excludes writes/delete.
+Unsupported native operations, locked files, and access failures are controlled
+errors. Windows-native behavior still requires testing on Windows.
+
+Linux opens ancestor directories using O_DIRECTORY/O_NOFOLLOW relative to held
+parent descriptors, verifies identities, and uses directory-relative mkdir or
+[renameat2 RENAME_NOREPLACE](https://man7.org/linux/man-pages/man2/rename.2.html).
+The OS rejects exact-name concurrent target creation; preflight existence checks
+are not the overwrite guarantee. Casefold checks reject pre-existing case variants
+on every platform. Case-sensitive filesystems can admit a concurrently created
+*differently cased* name; neither existing object is overwritten. Cross-device
+moves are rejected, and unsupported no-replace filesystems have no fallback.
+
+Residual races remain: Linux cannot pin a source name against another process's
+rename/unlink between final check and syscall. Held directory descriptors also do
+not stop a hostile process moving a directory outside the allowed tree. Use Linux
+support only in directories controlled by the same trusted OS user; it is not a
+boundary against adversarial local filesystem writers. Windows ancestor handles
+above configured roots lack DELETE access as in the existing pinning service;
+privileged mount/topology changes are outside this boundary. Identity snapshots
+are metadata checks, not content hashes or a complete race-resistance claim.
+No personal-file security guarantee should be inferred from mocked native tests.
+
+Nova serializes its own indexing/mutations. It cannot serialize external writers.
+SQLite updates preserve file IDs after rename/move. If synchronization fails after
+OS success, the result explicitly reports filesystem success and asks for index
+refresh; old results can remain until recovery. There is no compensating mutation.
+A process crash between OS success and index update/response can leave an unknown
+outcome; inspect the filesystem and refresh before requesting another action.
+This feature adds no durable transaction journal or full Feature 3.8 audit system.
+No secret/provider key reaches the UI; no shell/native capability was added to
+Tauri. Existing direct UI file-opening restrictions remain unchanged.
+
+Confirmation cards require backend-provided canonical source and destination paths
+from the frozen mutation plan, including the complete approved-root location.
+Directory catalog labels likewise include full canonical paths. This intentionally
+exposes those paths within the authenticated chat/tool context: basename-only or
+root-name-only labels cannot distinguish identically named files or approved roots.
+The UI shows both paths without truncation, as quoted text with whitespace, control
+and formatting characters escaped; it does not offer approval for older
+basename-only proposals.
+The decision request still sends only action and conversation IDs.
