@@ -57,13 +57,6 @@ class PendingAction(Contract):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class AgentResponse(Contract):
-    conversation_id: ConversationId | None = None
-    message: str
-    result: ToolResult | None = None
-    pending_action: PendingAction | None = None
-
-
 class ExecutionRecord(Contract):
     tool_call_id: str
     tool_name: str
@@ -75,3 +68,11 @@ class ExecutionRecord(Contract):
         "requested"
     )
     result: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentResponse(Contract):
+    conversation_id: ConversationId | None = None
+    message: str
+    result: ToolResult | None = None
+    pending_action: PendingAction | None = None
+    tool_executions: list[ExecutionRecord] = Field(default_factory=list)

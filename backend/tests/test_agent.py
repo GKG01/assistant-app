@@ -92,6 +92,7 @@ def test_api_success_no_dispatch_and_provider_cleanup(tmp_path, monkeypatch):
             "message": "No local operation was verified. Nova's current AI tools support indexed file search, file information, arithmetic and confirmation-required file interactions.",
             "result": None,
             "pending_action": None,
+            "tool_executions": [],
         }
         assert "test-secret" not in response.text
         dispatch.assert_not_called()

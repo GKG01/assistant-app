@@ -711,3 +711,47 @@ def test_timeout_setting_is_configurable_and_bounded(monkeypatch):
     for invalid in (0, -1, 86401):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, nova_conversation_timeout_seconds=invalid)
+
+
+def test_chat_metadata_preserves_verified_order_and_confirmation(conversation_client):
+    client, provider, _, opening, reveal = conversation_client
+    cid, rows, response = search(client, provider)
+    records = response.json()["tool_executions"]
+    assert len(records) == 1
+    assert records[0]["executed"] is True
+    assert records[0]["state"] == "completed"
+    assert records[0]["result"]["data"]["results"] == rows
+    assert response.json()["result"] is response.json()["pending_action"] is None
+    action(provider, "open_file", rows[1]["id"])
+    response = send(client, "Open the second one.", cid)
+    record = response.json()["tool_executions"][0]
+    assert record["confirmation_required"] is True
+    assert record["executed"] is False
+    assert record["result"]["status"] == "CONFIRMATION_REQUIRED"
+    opening.assert_not_called()
+    reveal.assert_not_called()
+
+
+def test_chat_provider_failure_returns_structured_verified_outcomes(
+    conversation_client,
+):
+    client, provider, *_ = conversation_client
+    provider.replies.extend(
+        [
+            reply(call("search_files", '{"query":"resume"}')),
+            LLMError("timeout"),
+        ]
+    )
+    response = send(client, "Find resume")
+    assert response.status_code == 504
+    body = response.json()
+    assert body["conversation_id"] == response.headers["X-Nova-Conversation-ID"]
+    assert body["tool_executions"][0]["result"]["success"] is True
+    assert len(body["tool_executions"][0]["result"]["data"]["results"]) == 3
+    assert (
+        client.post(
+            "/agent/conversation/clear",
+            json={"conversation_id": body["conversation_id"]},
+        ).status_code
+        == 200
+    )

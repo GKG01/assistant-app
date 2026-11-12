@@ -165,7 +165,7 @@ Revoked roots are hidden immediately after restart, even if their rows remain.
 
 ## Frontend
 
-Home retains the Nova header, backend status, and disabled future AI command bar.
+Home retains the Nova header and backend status, with Chat and Files navigation.
 FileSearch adds a filename form, extension filter, six sorts, page navigation,
 refresh statistics, loading/error/empty states, and file cards.
 The existing centralized api.ts performs all HTTP calls and supplies the required
@@ -216,8 +216,7 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
-permanent memory and Features 3.6–3.8 remain outside the implementation.
+Features 3.4 and 3.5 extend this boundary as documented below. Feature 3.6 adds the chat UI below; permanent memory and Features 3.7–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -343,3 +342,43 @@ no tool is retried automatically. Existing response placeholders remain unchange
 Use one backend worker. Restart loses sessions; no UI storage, login system,
 background cleanup, long-term memory or new dependencies are introduced. See README
 for configuration and the offline `scripts.check_conversations` walkthrough.
+
+
+## Feature 3.6 frontend integration
+
+```text
+User → React Chat Interface → Typed Frontend API Service
+→ Tauri Managed-Session Authentication → FastAPI /agent/message
+→ Conversation Context → Agent Orchestrator → LLM Provider
+→ Structured Tool Registry → GUARD Authorization
+→ Deterministic Backend Services → Verified Tool Results
+→ Grounded Agent Response → React Chat Interface
+```
+
+Home switches visible Chat/Files views without unmounting them. ChatPanel composes
+CommandInput, ChatMessageList and ChatToolStatus; the latter reuses FileResultCard
+without interaction controls. useChat owns volatile messages, server-issued ID,
+single-flight request state and clear lifecycle. agentService validates response
+shape; api.ts retains the one backend URL and sessionHeaders credential acquisition.
+No Rust, native capability, provider or orchestration changes are needed.
+
+AgentResponse adds `tool_executions`, sourced directly from the route's existing
+ExecutionRecord collector. The legacy message/result/pending_action fields remain.
+Provider errors after verified records preserve the existing detail and header and
+add conversation_id/tool_executions in the JSON error body. Errors before records
+retain the original detail-only shape. No arguments, credentials or provider SDK
+objects are added. Frontend results follow execution order with no prose parsing.
+
+The hook locks synchronously before sending, uses AbortController on unmount and
+checks request identity before state updates. Reset is disabled during sends/clear;
+it clears the backend before local state. 404 is treated as already unavailable;
+other failures retain context. Navigation does not cancel requests. A 660-second
+client timeout accommodates up to five configured 120-second provider calls, but
+is not a backend execution deadline. Aborting transport does not cancel tools.
+Unknown transport outcomes block continuation until explicit reset; a lost first
+response can leave an inaccessible session to expire naturally. No automatic replay.
+
+Frontend messages are capped at 100, input at 10,000 Unicode code points. Errors
+with outcomes attach records to the failed user turn without inventing an assistant
+reply. Scrolling follows new content only while already near the bottom. React
+renders all content as text; the composer supports native keyboard and IME events.

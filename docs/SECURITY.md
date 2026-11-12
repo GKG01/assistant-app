@@ -227,8 +227,7 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
-permanent memory and Features 3.6–3.8 remain outside the implementation.
+Features 3.4 and 3.5 extend this boundary as documented below. Feature 3.6 adds the chat UI below; permanent memory and Features 3.7–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -332,4 +331,40 @@ ordered selection, cross-session substitution, hostile historical data, confirma
 policy revocation, missing files, executable restrictions and symlink escapes. They
 mock native launches and the provider/SDK transport. Existing native race limitations
 and heuristic ordinary-text grounding limitations remain; neither live OpenAI nor
-Windows-native behavior is certified by these tests. Features 3.6–3.8 remain separate.
+Windows-native behavior is certified by these tests. Features 3.7–3.8 remain separate.
+
+
+## Feature 3.6 chat display boundary
+
+The UI is presentation, not authorization. Every chat and clear request obtains the
+existing managed-session headers through the restricted Tauri command. No secrets
+are stored in messages, localStorage or build-time variables; conversation IDs stay
+in memory and grant no permissions. Browser preview cannot acquire credentials.
+No Tauri permissions, OS execution paths, tool allowlists or path policies changed.
+
+Assistant text, filenames and result fields are untrusted React text nodes. There
+is no raw HTML, Markdown link execution, prose-to-action parsing or automatic native
+interaction. File cards appear only for successful, executed lookup records and keep
+backend ordering; malformed sets are omitted as a whole rather than renumbered.
+They are historical indexed metadata, not proof a file is still present or authorized.
+Chat cards intentionally omit direct action controls. Confirmation-required records
+are displayed as not executed, with no fabricated token, approval or lower-level call.
+
+Execution feedback uses the backend's existing collector, not model claims. The
+additive response metadata contains already bounded tool results, never provider
+continuations or secrets. Failures after tools preserve their verified outcomes and
+server session ID. HTTP validation bodies and transport diagnostics are not displayed.
+The grounded backend error detail is rendered only as text.
+
+Synchronous request locking prevents double sends; clearing is disabled in flight.
+Unmount aborts transport and invalidates the request identity. Delayed results cannot
+enter another mounted conversation. Expired sessions require explicit reset; no
+request is replayed automatically. Failed clears retain state and show an error.
+An aborted/timed-out request may still execute. When a first response is lost, its
+unknown backend session cannot be cleared by the UI; a fresh chat isolates it and
+normal backend lifecycle removes it. These are not cancellation guarantees.
+
+Offline tests exercise keyboard/IME events, content injection, session continuity,
+clear failures, errors, delayed responses, verified ordering and statuses, alongside
+existing backend ownership, GUARD, path/type and execution-limit regressions.
+Native Windows/WebView behavior and real provider access still require manual validation.
