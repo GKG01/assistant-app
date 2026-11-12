@@ -137,7 +137,22 @@ export async function agentRequest(
         typeof payload.detail === "string"
           ? payload.detail
           : (fallback[response.status] ?? "Agent request failed.");
-      throw new AgentError(detail, response.status, id, records);
+      const actionStatus =
+        path.startsWith("/actions/") &&
+        ["expired", "cancelled", "completed", "failed"].includes(
+          String(payload.action_status),
+        )
+          ? String(payload.action_status)
+          : undefined;
+      throw new AgentError(
+        actionStatus
+          ? `Action is ${actionStatus}; it cannot execute again.`
+          : detail,
+        response.status,
+        id,
+        records,
+        actionStatus,
+      );
     }
     return data;
   } catch (error) {

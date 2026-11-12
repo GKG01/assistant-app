@@ -467,6 +467,9 @@ def test_real_registered_interactive_tools_require_confirmation(file_client):
     file_id = client.get("/files/search").json()["results"][0]["id"]
     executor = client.app.state.agent._tools
     assert {d.name for d in executor.definitions(file_access=True)} == {
+        "create_folder",
+        "rename_file",
+        "move_file",
         "calculate",
         "search_files",
         "get_file_info",

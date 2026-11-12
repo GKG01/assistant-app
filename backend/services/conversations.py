@@ -14,6 +14,7 @@ from services.llm.base import ConversationTurn
 
 class ConversationError(Exception):
     def __init__(self, status: int, detail: str) -> None:
+        self.action_status: str | None = None
         self.status = status
         self.detail = detail
         super().__init__(detail)

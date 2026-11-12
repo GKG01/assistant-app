@@ -11,9 +11,9 @@ class IndexBusyError(RuntimeError):
 
 
 class FileIndexingService:
-    def __init__(self, indexer: FileIndexer) -> None:
+    def __init__(self, indexer: FileIndexer, *, lock=None) -> None:
         self.indexer = indexer
-        self._lock = Lock()
+        self._lock = lock if lock is not None else Lock()
 
     def refresh(self) -> IndexStats:
         if not self._lock.acquire(blocking=False):

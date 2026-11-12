@@ -40,6 +40,7 @@ export class AgentError extends Error {
     public status = 0,
     public conversationId?: string,
     public toolExecutions: ToolExecution[] = [],
+    public actionStatus?: string,
   ) {
     super(message);
   }

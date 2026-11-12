@@ -382,3 +382,69 @@ Frontend messages are capped at 100, input at 10,000 Unicode code points. Errors
 with outcomes attach records to the failed user turn without inventing an assistant
 reply. Scrolling follows new content only while already near the bottom. React
 renders all content as text; the composer supports native keyboard and IME events.
+
+## Feature 3.7 — Confirmed writes
+
+This section supersedes earlier descriptions of WRITE being unavailable. Existing
+READ and INTERACTIVE behavior remains separate from the new write lifecycle.
+
+```text
+User Request → React Chat UI → FastAPI Agent Endpoint → Conversation Context
+→ Agent Orchestrator → LLM Proposes Write Tool → ToolRegistry + GUARD Validation
+→ Pending Action Store → Structured Confirmation Card → User Confirm / Cancel
+→ Authenticated Confirmation API → Ownership + Expiration Checks
+→ Filesystem + Permission Revalidation → Deterministic Mutation Service
+→ File Index Synchronization → Verified Execution Result → Grounded UI Feedback
+```
+
+`tools/mutations.py` defines three strict schemas and WRITE registrations. Their
+ordinary `execute` method fails closed. The existing agent executor's explicit
+implementation allowlist calls `PermissionManager.prepare_write`; it cannot call
+confirmation. Preparation uses `FileMutationService` for read-only resolution and
+snapshots. Directory IDs are random backend-issued references scoped to the
+conversation/managed owner, supplied as untrusted context data to the provider.
+They cover allowed roots and immediate children only, with bounded enumeration.
+The existing file-reference resolver also recognizes rename/move and binds the
+selected file ID and operation; conflicting model calls are rejected.
+
+`PendingActionStore` holds at most 128 process-local action records and 32 directory
+catalogs (64 entries each). An action stores UUIDv4 ID, owner object, conversation
+ID, validated arguments, frozen mutation plan, identity snapshots, creation/expiry
+and status. Default expiry is 120 seconds. Cleanup is access-driven. Terminal
+records remain until expiry plus one TTL, allowing replay rejection without
+unbounded tombstones. A restart loses all proposals; none resume automatically.
+
+`POST /agent/actions/{action_id}/confirm` and `/cancel` accept only
+`{"conversation_id":"…"}`. Existing desktop authentication, request header,
+JSON/origin/body checks apply. Conversation ownership is checked under the existing
+busy lease before consuming an action. The store atomically changes pending to
+executing/cancelled; confirmed execution ends completed/failed. Expiry changes
+pending to expired. Non-pending decisions return 409; absent/wrong-context actions
+return 404. Clear invalidates proposals after successfully clearing the session.
+Expired/evicted conversations cannot acquire a lease, even if a proposal remains
+in memory. Confirming and clearing concurrently produces 409 for the loser.
+
+`PermissionManager.decide_write` rechecks registration/risk/schema and current
+filesystem policy before execution. The mutation service pins paths, revalidates
+snapshots/collisions, and performs one exclusive mkdir or no-replace rename. Index
+refresh and mutation share a nonblocking process-local lock, preventing Nova scans
+from restoring stale pre-mutation paths. Rename/move update the existing SQLite ID,
+path/name/extension/root in one transaction. Folder creation needs no file row.
+Index failure after mutation returns `INDEX_SYNC_FAILED` with filesystem success
+and index failure explicitly separated. It never rolls the filesystem back.
+
+Preparation returns an unexecuted confirmation-required execution record containing
+only a structured public action view. Confirm/cancel returns the actual execution
+record and deterministic message, and commits that outcome into conversation
+history. No provider call is needed to confirm. UI cards consume structured data,
+render names as text, and invoke the authenticated action API. The shared chat
+request lock prevents send/reset/double clicks during decisions; abort/unmount
+invalidates late results. Transport failure disables that card with an unknown
+outcome message; no automatic retry occurs. Backend lifecycle remains authoritative.
+
+The public pending-action view adds `source_path` (null for folder creation) and
+`destination_path` from the frozen canonical plan. Confirmation cards require these
+fields and show full locations, including roots, so duplicate names cannot collapse
+to identical approval details. Existing basename fields remain compatible. Directory
+catalog labels use canonical paths too; neither display paths nor labels are accepted
+as replacement confirmation arguments.

@@ -18,6 +18,17 @@ from services.llm.base import LLMToolCall, LLMToolDefinition
 from tools.calculator import CalculateTool
 from tools.files import GetFileInfoTool, SearchFilesTool, OpenFileTool, ShowInFolderTool
 
+from tools.mutations import (
+    CreateFolderTool,
+    MoveFileTool,
+    RenameFileTool,
+    CreateFolderInput,
+    MoveFileInput,
+    RenameFileInput,
+    WRITE_TOOLS,
+)
+from services.file_mutations import MutationError
+
 MAX_ARGUMENT_BYTES = 8192
 MAX_RESULT_BYTES = 16384
 
@@ -53,10 +64,15 @@ INTERACTION_TOOLS = frozenset({"open_file", "show_in_folder"})
 
 
 def expected_risk(name: str) -> RiskLevel:
+    if name in WRITE_TOOLS:
+        return RiskLevel.WRITE
     return RiskLevel.INTERACTIVE if name in INTERACTION_TOOLS else RiskLevel.READ
 
 
 APPROVED = {
+    "create_folder": (CreateFolderTool, CreateFolderInput),
+    "move_file": (MoveFileTool, MoveFileInput),
+    "rename_file": (RenameFileTool, RenameFileInput),
     "search_files": (SearchFilesTool, AgentSearchInput),
     "get_file_info": (GetFileInfoTool, AgentFileInput),
     "calculate": (CalculateTool, AgentCalculateInput),
@@ -139,6 +155,7 @@ class AgentToolExecutor:
         file_access: bool,
         history: list[ExecutionRecord] | None = None,
         resolved: ResolvedReference | None = None,
+        write_context: tuple | None = None,
     ) -> ExecutionRecord:
         record = ExecutionRecord(tool_call_id=call.id, tool_name=call.name)
         record.result = json.loads(
@@ -148,6 +165,7 @@ class AgentToolExecutor:
                 record=record,
                 history=history,
                 resolved=resolved,
+                write_context=write_context,
             )
         )
         record.state = (
@@ -168,6 +186,7 @@ class AgentToolExecutor:
         record: ExecutionRecord | None = None,
         history: list[ExecutionRecord] | None = None,
         resolved: ResolvedReference | None = None,
+        write_context: tuple | None = None,
     ) -> str:
         try:
             return bounded_result(
@@ -177,8 +196,11 @@ class AgentToolExecutor:
                     record=record,
                     history=history,
                     resolved=resolved,
+                    write_context=write_context,
                 )
             )
+        except MutationError as exc:
+            return encode(error(exc.code, str(exc)))
         except FileNotFoundError:
             return encode(
                 error("NOT_FOUND", "Indexed file no longer exists or was not found.")
@@ -221,6 +243,7 @@ class AgentToolExecutor:
         record: ExecutionRecord | None = None,
         history: list[ExecutionRecord] | None = None,
         resolved: ResolvedReference | None = None,
+        write_context: tuple | None = None,
     ) -> dict[str, Any]:
         try:
             tool = self.registry.get(call.name)
@@ -259,15 +282,17 @@ class AgentToolExecutor:
             if (
                 call.name == "search_files"
                 or (
-                    call.name in {"get_file_info", *INTERACTION_TOOLS}
+                    call.name
+                    in {"get_file_info", *INTERACTION_TOOLS, "move_file", "rename_file"}
                     and arguments.file_id != resolved.file_id
                 )
                 or (
-                    call.name in INTERACTION_TOOLS
+                    call.name in INTERACTION_TOOLS | WRITE_TOOLS
                     and (
                         call.name != resolved.operation
                         or any(
-                            r.tool_name in INTERACTION_TOOLS for r in (history or [])
+                            r.tool_name in INTERACTION_TOOLS | WRITE_TOOLS
+                            for r in (history or [])
                         )
                     )
                 )
@@ -276,7 +301,7 @@ class AgentToolExecutor:
                     "INVALID_ARGUMENTS",
                     "The proposed action conflicts with the selected file or operation. Please clarify your request.",
                 )
-        if call.name in INTERACTION_TOOLS:
+        if call.name in INTERACTION_TOOLS | {"move_file", "rename_file"}:
             searches = [r for r in (history or []) if r.tool_name == "search_files"]
             if searches:
                 latest = searches[-1].result
@@ -292,6 +317,24 @@ class AgentToolExecutor:
                         "INVALID_ARGUMENTS",
                         "Please narrow the search to one matching file before requesting an interaction.",
                     )
+        if call.name in WRITE_TOOLS:
+            if write_context is None:
+                return error("PERMISSION_DENIED", "A managed conversation is required.")
+            store, cid, owner = write_context
+            action = self.permissions.prepare_write(
+                ToolCall(tool=call.name, arguments=arguments.model_dump()),
+                store=store,
+                conversation_id=cid,
+                owner=owner,
+            )
+            if record is not None:
+                record.confirmation_required = True
+            result = error(
+                "CONFIRMATION_REQUIRED",
+                "Review the proposed action and choose Confirm or Cancel. No filesystem mutation occurred.",
+            )
+            result["data"] = {"pending_action": action}
+            return result
         result = self.permissions.dispatch(
             ToolCall(tool=call.name, arguments=arguments.model_dump(mode="json")),
             read_only=call.name not in INTERACTION_TOOLS,
@@ -314,7 +357,7 @@ class AgentToolExecutor:
         if result.status != "completed":
             return error(
                 "INVALID_ARGUMENTS"
-                if call.name in INTERACTION_TOOLS
+                if call.name in INTERACTION_TOOLS | WRITE_TOOLS
                 else "EXECUTION_FAILURE",
                 "The tool could not complete the request (check arithmetic and filters).",
             )

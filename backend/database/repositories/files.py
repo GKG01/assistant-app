@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from database.database import Database
+from permissions.paths import PathPolicy
 from services.file_models import (
     FileMetadata,
     IndexedFile,
@@ -25,6 +26,31 @@ SORTS = {
 class FileRepository:
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    def relocate(
+        self, file_id: int, source: Path, destination: Path, policy: PathPolicy
+    ) -> None:
+        """Keep the stable ID; a failed transaction must be reported after mutation."""
+        root = next(
+            policy.validate_root(r)
+            for r in policy.roots
+            if destination.is_relative_to(r)
+        )
+        with self._database.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE files SET path=?, name=?, name_key=?, extension=?, root_path=? WHERE id=? AND path=?",
+                (
+                    str(destination),
+                    destination.name,
+                    destination.name.casefold(),
+                    destination.suffix.casefold(),
+                    str(root),
+                    file_id,
+                    str(source),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Index record changed during mutation.")
 
     def get_file_by_id(self, file_id: int) -> IndexedFile | None:
         with self._database.connect() as connection:

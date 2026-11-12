@@ -1,4 +1,5 @@
 import sqlite3
+from threading import Lock
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -23,6 +24,9 @@ from services.file_search import FileSearchService
 from services.conversations import ConversationStore
 from services.file_indexing import FileIndexingService, IndexBusyError
 from services.file_actions import FileActionService, WindowsFileLauncher
+from tools.mutations import CreateFolderTool, MoveFileTool, RenameFileTool
+from services.file_mutations import FileMutationService
+from services.pending_actions import PendingActionStore
 from tools.calculator import CalculateTool
 from tools.files import SearchFilesTool, GetFileInfoTool, OpenFileTool, ShowInFolderTool
 from services.llm.base import LLMProvider
@@ -53,6 +57,7 @@ def create_app(
             search, ActionRepository(database), WindowsFileLauncher()
         )
         db_path = configuration.database_path.absolute()
+        filesystem_lock = Lock()
         app.state.indexing = FileIndexingService(
             FileIndexer(
                 policy,
@@ -63,10 +68,17 @@ def create_app(
                     db_path.with_name(db_path.name + "-wal"),
                     db_path.with_name(db_path.name + "-shm"),
                 ),
-            )
+            ),
+            lock=filesystem_lock,
         )
         registry = ToolRegistry()
         registry.register(CalculateTool())
+        app.state.pending_actions = PendingActionStore(
+            FileMutationService(search, lock=filesystem_lock),
+            ttl=configuration.nova_confirmation_timeout_seconds,
+        )
+        for tool in (CreateFolderTool(), MoveFileTool(), RenameFileTool()):
+            registry.register(tool)
         for tool in (
             SearchFilesTool(search),
             GetFileInfoTool(search),

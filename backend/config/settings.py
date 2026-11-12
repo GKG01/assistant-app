@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     openai_max_output_tokens: int = Field(default=1024, ge=16, le=16384)
     # JSON array of absolute paths. Empty means no filesystem access.
     nova_allowed_directories: list[Path] = []
+    nova_confirmation_timeout_seconds: int = Field(default=120, ge=10, le=600)
     nova_allow_agent_reveal: bool = False
     nova_conversation_timeout_seconds: int = Field(default=1800, ge=1, le=86400)
 

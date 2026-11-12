@@ -154,3 +154,69 @@ it("rejects mismatched error session without overwriting active context", async 
     ),
   ).rejects.toThrow("Unexpected backend conversation");
 });
+
+it("confirms only the stored ID using authenticated headers and conversation binding", async () => {
+  const { decideAction } = await import("../services/agentService");
+  const aid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const fetcher = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          conversation_id: cid,
+          action: { action_id: aid, conversation_id: cid, status: "completed" },
+          message: "Completed",
+          tool_executions: [],
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await decideAction(aid, cid, "confirm", new AbortController().signal);
+  expect(fetcher.mock.calls[0]).toBeDefined();
+  const options = (
+    fetcher.mock.calls as unknown as [string, RequestInit][]
+  )[0][1];
+  expect(JSON.parse(String(options.body))).toEqual({ conversation_id: cid });
+  expect(options.headers).toMatchObject({
+    Authorization: "Bearer test-only",
+    "X-Nova-Request": "1",
+  });
+});
+
+it("preserves structured expiration and rejects cross-conversation action responses", async () => {
+  const { decideAction } = await import("../services/agentService");
+  const aid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ detail: "Expired", action_status: "expired" }),
+          { status: 409 },
+        ),
+    ),
+  );
+  await expect(
+    decideAction(aid, cid, "confirm", new AbortController().signal),
+  ).rejects.toMatchObject({ status: 409, actionStatus: "expired" });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            conversation_id: aid,
+            action: {
+              action_id: aid,
+              conversation_id: aid,
+              status: "completed",
+            },
+            message: "Completed",
+            tool_executions: [],
+          }),
+        ),
+    ),
+  );
+  await expect(
+    decideAction(aid, cid, "confirm", new AbortController().signal),
+  ).rejects.toThrow("could not be verified");
+});
