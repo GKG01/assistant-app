@@ -1,3 +1,9 @@
+import {
+  AgentError,
+  executions,
+  isObject,
+  validConversationId,
+} from "./agentContract";
 import type {
   FileActionResponse,
   HealthResponse,
@@ -82,4 +88,64 @@ export async function healthCheck(
   )
     throw new Error("Unexpected health response.");
   return data as HealthResponse;
+}
+
+// Same URL and per-request managed-session credential as the existing file client.
+export async function agentRequest(
+  path: string,
+  body: Record<string, string>,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const combined = AbortSignal.any([
+    signal,
+    AbortSignal.timeout(path === "/conversation/clear" ? 30000 : 660000),
+  ]);
+  try {
+    const response = await fetch(`${BASE_URL}/agent${path}`, {
+      method: "POST",
+      headers: {
+        ...(await sessionHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: combined,
+    });
+    const data: unknown = await response.json();
+    if (!response.ok) {
+      const payload = isObject(data) ? data : {};
+      const id = validConversationId(payload.conversation_id)
+        ? payload.conversation_id
+        : undefined;
+      const records =
+        payload.tool_executions === undefined
+          ? []
+          : executions(payload.tool_executions);
+      const fallback: Record<number, string> = {
+        401: "Desktop session unavailable. Restart Nova.",
+        403: "Request denied by backend policy.",
+        404: "Conversation unavailable or expired. Start a new conversation and search again.",
+        409: "This conversation is busy. Wait before trying again.",
+        422: "Invalid message or conversation ID. Check your input.",
+        429: "AI provider rate limit reached. Try again later.",
+        502: "AI provider could not complete the request.",
+        503: "AI provider is unavailable or not configured. Check backend configuration.",
+        504: "AI provider timed out. The request may have performed operations.",
+      };
+      // Only the backend's sanitized agent error detail; never raw validation bodies.
+      const detail =
+        [429, 502, 503, 504].includes(response.status) &&
+        typeof payload.detail === "string"
+          ? payload.detail
+          : (fallback[response.status] ?? "Agent request failed.");
+      throw new AgentError(detail, response.status, id, records);
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof AgentError) throw error;
+    throw new AgentError(
+      combined.aborted
+        ? "Request timed out or was interrupted. Backend operations may still finish; do not blindly resend."
+        : "Could not reach Nova's managed backend or read its response. Start or restart the desktop app. The request outcome is unknown.",
+    );
+  }
 }

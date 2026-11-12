@@ -3,8 +3,8 @@ import { formatBytes, formatDate } from "../../utils/format";
 
 interface Props {
   file: IndexedFile;
-  busy: boolean;
-  onAction: (id: number, action: "open" | "reveal") => void;
+  busy?: boolean;
+  onAction?: (id: number, action: "open" | "reveal") => void;
 }
 
 export function FileResultCard({ file, busy, onAction }: Props) {
@@ -16,24 +16,26 @@ export function FileResultCard({ file, busy, onAction }: Props) {
         {formatBytes(file.size)} · Modified {formatDate(file.modified_at)}
       </p>
       <p className="mt-2 break-all text-xs text-slate-500">{file.path}</p>
-      <div className="mt-3 flex gap-2">
-        <button
-          className="button bg-teal-900 hover:bg-teal-800"
-          disabled={busy}
-          onClick={() => onAction(file.id, "open")}
-          aria-label={`Open ${file.name}`}
-        >
-          Open
-        </button>
-        <button
-          className="button bg-slate-800 hover:bg-slate-700"
-          disabled={busy}
-          onClick={() => onAction(file.id, "reveal")}
-          aria-label={`Show ${file.name} in folder`}
-        >
-          Show in Folder
-        </button>
-      </div>
+      {onAction && (
+        <div className="mt-3 flex gap-2">
+          <button
+            className="button bg-teal-900 hover:bg-teal-800"
+            disabled={busy}
+            onClick={() => onAction(file.id, "open")}
+            aria-label={`Open ${file.name}`}
+          >
+            Open
+          </button>
+          <button
+            className="button bg-slate-800 hover:bg-slate-700"
+            disabled={busy}
+            onClick={() => onAction(file.id, "reveal")}
+            aria-label={`Show ${file.name} in folder`}
+          >
+            Show in Folder
+          </button>
+        </div>
+      )}
     </li>
   );
 }

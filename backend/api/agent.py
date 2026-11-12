@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent.agent import Agent
@@ -68,7 +69,7 @@ async def message(
     request: AgentRequest,
     http_request: Request,
     agent: Annotated[Agent, Depends(get_agent)],
-) -> AgentResponse:
+) -> AgentResponse | JSONResponse:
     owner, file_access = conversation_owner(http_request)
     store = http_request.app.state.conversations
     try:
@@ -90,10 +91,23 @@ async def message(
                     detail += "\n" + grounded_message("", records)
                     store.commit(context, request.message, detail, records)
                     headers = {"X-Nova-Conversation-ID": context.conversation_id}
-                raise HTTPException(status, detail, headers=headers) from None
+                if not records:
+                    raise HTTPException(status, detail) from None
+                return JSONResponse(
+                    status_code=status,
+                    content={
+                        "detail": detail,
+                        "conversation_id": context.conversation_id if records else None,
+                        "tool_executions": [r.model_dump(mode="json") for r in records],
+                    },
+                    headers=headers,
+                )
             store.commit(context, request.message, response.message, records)
             return response.model_copy(
-                update={"conversation_id": context.conversation_id}
+                update={
+                    "conversation_id": context.conversation_id,
+                    "tool_executions": records,
+                }
             )
     except ConversationError as exc:
         raise HTTPException(exc.status, exc.detail) from None

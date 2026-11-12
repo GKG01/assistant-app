@@ -1,7 +1,7 @@
 # Nova
 
 Nova is a local-first, Windows-first desktop personal/admin assistant.
-Phase 2 provides deterministic local file indexing and search. Features 3.1–3.5 add
+Phase 2 provides deterministic local file indexing and search. Features 3.1–3.6 add
 AI responses, bounded structured tool calling, grounding, and guarded file interactions. The backend still starts without a provider
 key; deterministic file features remain available. Voice remains a stub.
 
@@ -46,8 +46,7 @@ See [Architecture](docs/ARCHITECTURE.md) and [Security](docs/SECURITY.md).
 - Guarded calculator and file tools, with automated tests using temporary files.
 
 POST /agent/message returns text from the configured LLM, optionally using approved
-tools: calculate, search_files, get_file_info, open_file, and show_in_folder. The voice route returns 501; Send and Mic stay disabled until later UI
-integration. No permanent memory, content extraction, embeddings, background
+tools: calculate, search_files, get_file_info, open_file, and show_in_folder. The desktop Chat view integrates this endpoint; voice remains unavailable. No permanent memory, content extraction, embeddings, background
 watchers, or file move/rename/delete operations exist.
 
 ## Prerequisites
@@ -223,8 +222,8 @@ The UI waits up to ten minutes for refresh. A client timeout does not cancel a s
 
 ## Feature 3.2: read-only AI tool calling
 
-Features 3.1–3.5 are implemented. Requests may continue bounded in-memory conversations (Feature 3.5 below);
-there is no permanent conversation storage, chat UI integration, or write confirmation.
+Features 3.1–3.6 are implemented. Requests may continue bounded in-memory conversations (Feature 3.5 below);
+there is no permanent conversation storage or write confirmation.
 The response retains `message`, `result: null`, `pending_action: null` and adds `conversation_id`.
 
 The agent sends approved schemas to the provider, receives structured tool calls,
@@ -401,7 +400,7 @@ see [Security](docs/SECURITY.md) for the implemented boundary and limits.
 
 ## Next step
 
-Feature 3.6 — Chat UI Integration. Features 3.6–3.8 are not implemented.
+Feature 3.7 — Write Tools + Confirmation. Features 3.7–3.8 are not implemented.
 Native Windows Open/Show in Folder validation,
 voice, WRITE confirmation, and packaging remain separate work.
 
@@ -431,8 +430,7 @@ conservative. Indexed metadata can be stale until refresh.
 
 Tool strings remain JSON data, never privileged instructions. The existing exact
 tool allowlist, desktop authorization and filesystem policy remain authoritative.
-Features 3.4 and 3.5 extend this boundary as documented below. Full chat UI,
-permanent memory and Features 3.6–3.8 remain outside the implementation.
+Features 3.4 and 3.5 extend this boundary as documented below. Feature 3.6 adds the chat UI below; permanent memory and Features 3.7–3.8 remain outside the implementation.
 Run `cd backend && .venv/bin/python -m pytest -q` for offline fake-provider tests.
 Existing manual commands and provider configuration apply unchanged.
 
@@ -501,7 +499,7 @@ For an optional real Explorer check, run **native Windows PowerShell** from `bac
 This reveals only the generated temporary `safe.txt`, waits for visual inspection,
 then cleans up. Opening remains mocked and must never be called: confirmation is
 not bypassed. Use `.\.venv\Scripts\python.exe` for the other commands on Windows.
-Features 3.6–3.8, permanent chat storage, full chat UI and write confirmation are absent.
+Features 3.7–3.8, permanent chat storage and write confirmation are absent.
 
 Feature 3.4 regression checks also cover narrowing an ambiguous search within one
 request, rejecting an ID different from the unique search result, and rejecting
@@ -512,8 +510,8 @@ These tests verify grounded failures as well as successful mocked reveal request
 
 ## Feature 3.5: bounded conversation context
 
-Features 3.1–3.5 are implemented. Backend-owned, in-memory conversations support
-follow-ups to verified indexed file results without adding UI, permanent memory,
+Features 3.1–3.6 are implemented. Backend-owned, in-memory conversations support
+follow-ups to verified indexed file results without adding permanent memory,
 write tools or confirmation workflows.
 
 `POST /agent/message` still accepts `{"message":"Find resumes"}`. It creates a
@@ -623,5 +621,68 @@ are required. The demo is also exercised by pytest.
 
 Live OpenAI multi-turn behavior and native Windows Explorer/file associations still
 require separate validation. The resolver is intentionally narrow; ordinary text
-grounding retains Feature 3.3's heuristic limitations. Feature 3.6 — Chat UI
-Integration is the next step; Features 3.6–3.8 have not been implemented.
+grounding retains Feature 3.3's heuristic limitations. Feature 3.6 integrates these APIs below; Features 3.7–3.8 have not been implemented.
+
+
+## Feature 3.6: desktop chat
+
+Run `cd desktop && npm run tauri dev` with the backend virtual environment installed
+and no separately running server. Chat is the default view; **Files** retains indexing,
+search and direct interactions. The existing status indicator checks the managed backend.
+Browser preview shows the layout but chat requests require the managed Tauri session.
+Provider credentials remain backend-only; without them chat shows a configuration error.
+
+Send a message with Enter or the Send button; Shift+Enter inserts a newline. IME
+composition does not submit. Messages are plain text, limited to 10,000 characters.
+One request runs at a time with a generic processing indicator; there is no streaming.
+User messages remain visible after failures, with an explicit edit-before-resending
+control when continuation is safe. Nothing is automatically retried.
+
+The first successful response supplies a backend conversation ID, reused in memory.
+Changing between Chat and Files preserves the active chat, including pending requests.
+**New Conversation** waits until requests finish, calls `/agent/conversation/clear`,
+and resets messages, draft and ID only after success or an unavailable-session 404.
+Other clear failures preserve the old view and show an error. Expired/restarted sessions
+require an explicit new conversation; follow-ups are never replayed into a new session.
+A request whose response was lost may have executed operations. On a first-turn
+transport failure its backend ID may be unknown: starting fresh isolates the old
+session but cannot promise it was deleted; backend expiry/process exit removes it.
+
+Verified search/info cards use only execution-record metadata, in returned order.
+Only the latest lookup controls numbered follow-ups; older cards are historical.
+Chat cards have no action buttons. Tool feedback distinguishes rejected, failed,
+completed and confirmation-required outcomes. Windows acceptance does not prove a
+viewer rendered the file. AI open remains confirmation-required with no approval
+flow; reveal follows existing backend policy. The actual grounded response is shown
+unchanged, so metadata may appear both in text and cards.
+
+Offline validation (no API credits, network requests or real viewer launches):
+
+```bash
+cd desktop
+npm test
+npm run format:check
+npm run typecheck
+npm run build
+cd ../backend
+.venv/bin/python -m pytest -q
+.venv/bin/python -m scripts.check_conversations
+```
+
+Vitest and jsdom are development-only test dependencies; components use React DOM
+and mocked API responses. Backend integration tests use deterministic fake providers,
+temporary SQLite/files and mocked Windows launches. No fake provider is enabled in
+production. Live OpenAI and Windows-native WebView/IME/viewer checks remain unverified.
+
+Manual desktop checks: send “Hello, Nova”; calculate “125 * 8”; index a test folder
+in Files, return to Chat and ask “Find my resume”, then “Open the second one”. Verify
+ordered cards and a confirmation-required outcome. Start New Conversation and repeat
+the follow-up: old references must be unavailable. Test keyboard-only use, Shift+Enter,
+IME input, narrow windows, scrolling older messages and backend disconnection.
+Successful provider-backed manual requests require configured provider access/credits.
+
+The frontend retains at most 100 messages before requiring New Conversation; this
+is separate from the backend's shorter bounded history. Chat is volatile, with no
+history sidebar, permanent memory, voice, Markdown execution or write tools.
+Features 3.1–3.6 are implemented; Feature 3.7 (Write Tools + Confirmation) and
+Feature 3.8 remain future work.
